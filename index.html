@@ -207,10 +207,13 @@ input[type=color]{width:34px;height:28px;border:1px solid var(--line);border-rad
       <button data-act="library"><span class="ic">✎</span>Tekening uit bibliotheek…</button>
       <button data-act="svgfile"><span class="ic">⇪</span>SVG-bestand…</button>
       <button data-act="olt"><span class="ic">ℓ</span>Tekst als lijn…</button>
-      <button data-act="shape"><span class="ic">◍</span>3D-vorm uit één lijn…</button>
+      <button data-act="shape"><span class="ic">◍</span>3D-vorm of 3D-tekening…</button>
       <hr>
       <button data-act="text"><span class="ic">T</span>Tekst</button>
       <button data-act="image"><span class="ic">▣</span>Afbeelding…</button>
+      <button data-act="video"><span class="ic">▶</span>Video (bestand)…</button>
+      <button data-act="videolink"><span class="ic">☁</span>Video via link (cloud)…</button>
+      <button data-act="youtube"><span class="ic">▶</span>YouTube…</button>
     </div></div>
     <div class="menu" data-menu="layout"><button class="tbtn">Indeling ▾</button><div class="drop">
       <div class="lbl">Dia's in de ruimte zetten</div>
@@ -261,11 +264,13 @@ input[type=color]{width:34px;height:28px;border:1px solid var(--line);border-rad
 <input type="file" id="file-json" accept=".json,application/json" hidden>
 <input type="file" id="file-svg" accept=".svg,image/svg+xml" hidden>
 <input type="file" id="file-img" accept="image/*" hidden>
+<input type="file" id="file-video" accept="video/*" hidden>
 
 <script src="assets/vendor/three.min.js"></script>
 <script src="assets/svglibrary.js"></script>
 <script src="assets/onelinefont.js"></script>
 <script src="assets/js/engine.js"></script>
+<script src="assets/js/models3d.js"></script>
 <script src="assets/js/editor.js"></script>
 </body>
 </html>

@@ -43,7 +43,23 @@ function toast(msg, type, ms) {
   setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 320); }, ms || 2600);
 }
 function busy(txt) { $('#busy').classList.toggle('on', !!txt); if (txt) $('#busytxt').textContent = txt; }
-function theme() { return O.THEMES[doc.settings.world] || O.THEMES.papier; }
+function theme() { return O.themeOf(doc.settings); }
+// ── media (afbeeldingen en video's) apart bewaren, zodat ongedaan maken en
+// automatisch bewaren snel blijven; elementen verwijzen ernaar met media:<id>
+const noMedia = (k, v) => (k === 'media' && v && typeof v === 'object' && !Array.isArray(v)) ? undefined : v;
+function addMedia(dataUrl) {
+  const id = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  doc.media[id] = dataUrl;
+  DB.set('m:' + id, dataUrl).catch(() => {});
+  return 'media:' + id;
+}
+function usedMedia(d) {
+  const ids = new Set();
+  d.slides.forEach(sl => sl.items.forEach(it => { if (typeof it.src === 'string' && it.src.startsWith('media:')) ids.add(it.src.slice(6)); }));
+  const m = {}; ids.forEach(id => { if (d.media && d.media[id]) m[id] = d.media[id]; }); return m;
+}
+function fmtTime(t) { t = Math.max(0, +t || 0); const m = Math.floor(t / 60), s2 = Math.round((t - m * 60) * 10) / 10; return m + ':' + (s2 < 10 ? '0' : '') + s2; }
+function parseTime(v) { v = String(v || '').trim(); if (!v) return 0; if (/^\d+(\.\d+)?$/.test(v)) return +v; const p = v.split(':').map(Number); if (p.some(isNaN)) return 0; return p.reduce((a, b) => a * 60 + b, 0); }
 function slide() { return doc.slides[cur]; }
 function item() { const s = slide(); return s && sel >= 0 ? s.items[sel] : null; }
 function isTyping(t) { return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
@@ -298,6 +314,7 @@ let thumbsT = null;
 function scheduleThumbs() { clearTimeout(thumbsT); thumbsT = setTimeout(renderSlides, 260); }
 function setDoc(d, keepCur) {
   doc = O.normalizeDoc(d);
+  Object.entries(doc.media).forEach(([id, v]) => DB.set('m:' + id, v).catch(() => {}));
   if (!keepCur) cur = 0;
   cur = clamp(cur, 0, Math.max(0, doc.slides.length - 1)); sel = -1;
   // tekstpaden opnieuw opbouwen met het huidige font
@@ -331,12 +348,14 @@ function setMode(m) {
 }
 
 // ── dia-editor (overlay) ────────────────────────────────────────────────
-const ITEM_ICON = { svg: '✎', olt: 'ℓ', shape: '◍', text: 'T', image: '▣' };
-const ITEM_TYPE = { svg: 'Tekening', olt: 'Tekst als lijn', shape: '3D-vorm', text: 'Tekst', image: 'Afbeelding' };
+const ITEM_ICON = { svg: '✎', olt: 'ℓ', shape: '◍', model: '⬡', text: 'T', image: '▣', video: '▶' };
+const ITEM_TYPE = { svg: 'Tekening', olt: 'Tekst als lijn', shape: '3D-vorm', model: '3D-tekening', text: 'Tekst', image: 'Afbeelding', video: 'Video' };
 function itemLabel(it) {
   if (it.type === 'svg') return it.name || 'Tekening';
   if (it.type === 'olt') return '“' + (it.text || '').replace(/\n/g, ' ') + '”';
   if (it.type === 'shape') return (O.SHAPES[it.shape] || {}).name || 'Vorm';
+  if (it.type === 'model') return it.name || ((window.OLP3D_MODELS && window.OLP3D_MODELS.MODELS[it.model]) || {}).name || '3D-tekening';
+  if (it.type === 'video') return it.name || 'Video';
   if (it.type === 'text') return (it.text || '').split('\n')[0] || 'Tekst';
   return 'Afbeelding';
 }
@@ -367,9 +386,9 @@ function updateOverlay() {
 const thumbCache = new Map();
 function thumbSVG(s) {
   const th = theme();
-  const key = O.hashStr(JSON.stringify(s) + '|' + doc.settings.world);
+  const key = O.hashStr(JSON.stringify(s) + '|' + JSON.stringify(doc.settings.custom) + doc.settings.world + doc.settings.frame);
   if (thumbCache.has(key)) return thumbCache.get(key);
-  const bg = s.cardColor || th.card, lineDef = s.lineColor || th.line;
+  const bg = doc.settings.frame === 'kaart' ? (s.cardColor || th.card) : th.mid, lineDef = s.lineColor || th.line;
   let o = `<svg viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg"><rect width="1920" height="1080" fill="${esc(bg)}"/>`;
   s.items.forEach(it => {
     const rot = it.rot ? ` transform="rotate(${it.rot} ${it.x + it.w / 2} ${it.y + it.h / 2})"` : '';
@@ -383,14 +402,22 @@ function thumbSVG(s) {
     } else if (it.type === 'shape') {
       const sz = Math.min(it.w, it.h), x = it.x + (it.w - sz) / 2, y = it.y + (it.h - sz) / 2;
       o += `<svg x="${x}" y="${y}" width="${sz}" height="${sz}" viewBox="0 0 100 100"><path d="${O.shapePreviewPath(it.shape, it.detail, it.tiltX, it.tiltY, 100)}" fill="none" stroke="${esc(it.color || lineDef)}" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg>`;
+    } else if (it.type === 'model' && window.OLP3D_MODELS) {
+      const md = window.OLP3D_MODELS.build(it.model, it.detail); if (!md) return;
+      const e = new THREE.Euler(it.tiltX * DEG, it.tiltY * DEG, 0, 'YXZ'), v = new THREE.Vector3(), sz = Math.min(it.w, it.h);
+      let d = ''; const step = Math.max(1, Math.floor(md.p.length / 900));
+      for (let k = 0; k < md.p.length; k += step) { v.set(...md.p[k]).applyEuler(e); d += (k && md.v[k] ? 'L' : 'M') + (it.x + it.w / 2 + v.x * sz * .46).toFixed(0) + ' ' + (it.y + it.h / 2 - v.y * sz * .46).toFixed(0); }
+      o += '<path d="' + d + '" fill="none" stroke="' + esc(it.color || lineDef) + '" stroke-width="1.2" vector-effect="non-scaling-stroke"/>';
     } else if (it.type === 'text') {
       const m = O.measureTextItem(it), anchor = it.align === 'left' ? 'start' : it.align === 'right' ? 'end' : 'middle';
       const ax = it.align === 'left' ? it.x + it.size * .15 : it.align === 'right' ? it.x + m.w - it.size * .15 : it.x + m.w / 2;
       const rt = it.rot ? ` transform="rotate(${it.rot} ${it.x + m.w / 2} ${it.y + m.h / 2})"` : '';
       o += `<g${rt} font-family="${esc(it.font)}" font-size="${it.size}" font-weight="${it.bold ? 700 : 400}" font-style="${it.italic ? 'italic' : 'normal'}" fill="${esc(it.color || th.text)}" text-anchor="${anchor}">` +
         m.lines.map((l, k) => `<text x="${ax}" y="${it.y + it.size * .1 + it.size * 1.25 * (k + .5)}" dominant-baseline="central">${esc(l)}</text>`).join('') + '</g>';
+    } else if (it.type === 'video') {
+      o += `<g${rot}><rect x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" rx="18" fill="#1c1736"/><circle cx="${it.x + it.w / 2}" cy="${it.y + it.h / 2}" r="${Math.min(it.w, it.h) * .14}" fill="#fff"/><path d="M${it.x + it.w / 2 - Math.min(it.w, it.h) * .05} ${it.y + it.h / 2 - Math.min(it.w, it.h) * .07}l${Math.min(it.w, it.h) * .12} ${Math.min(it.w, it.h) * .07}l-${Math.min(it.w, it.h) * .12} ${Math.min(it.w, it.h) * .07}z" fill="#ff5eb8"/></g>`;
     } else if (it.type === 'image' && it.src) {
-      o += `<g${rot}><image href="${esc(it.src)}" x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" opacity="${it.opacity ?? 1}" preserveAspectRatio="xMidYMid meet"/></g>`;
+      o += `<g${rot}><image href="${esc(O.resolveSrc(doc, it.src))}" x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" opacity="${it.opacity ?? 1}" preserveAspectRatio="xMidYMid meet"/></g>`;
     }
   });
   o += '</svg>';
@@ -506,8 +533,18 @@ function oltBox(src, cx, cy, hPerLine) {
   if (w > 1700) { h *= 1700 / w; w = 1700; }
   return { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w: Math.round(w), h: Math.round(h) };
 }
-function addLibrary(entry) {
-  pushItem({ type: 'svg', svg: entry.svg, name: entry.name, x: 0, y: 0, w: FW, h: FH });
+// Bibliotheek: voeg de 3D-versie toe (echt 3D-model, reliëf of tekst als lijn).
+function addLibrary(entry, flat) {
+  const L = window.OLP3D_MODELS ? window.OLP3D_MODELS.libraryFor(entry.file) : null;
+  if (flat || !L) { pushItem({ type: 'svg', svg: entry.svg, name: entry.name, x: 0, y: 0, w: FW, h: FH }); return; }
+  if (L.model) {
+    const s = slide();
+    if (s && !s.items.length && s.motion === 'zweven') s.motion = 'rondje';
+    pushItem({ type: 'model', model: L.model, name: entry.name, x: 530, y: 110, w: 860, h: 860 });
+  } else if (L.text) {
+    const src = O.composeOneLineText(L.text);
+    pushItem({ type: 'olt', text: L.text, src, deform: L.deform || 'golf', depth: L.depth || 1, ...oltBox(src, FW / 2, FH * .45, 300) });
+  } else pushItem({ type: 'svg', svg: entry.svg, name: entry.name, x: 0, y: 0, w: FW, h: FH, deform: 'relief', depth: L.relief || 2.2 });
 }
 function addSvgText(text, name) {
   const clean = O.sanitizeSvgText(text);
@@ -526,6 +563,12 @@ async function addOlt() {
   if (!src) { toast('Geen tekens gevonden die in het one-line-font staan', 'err'); return; }
   const b = oltBox(src, FW / 2, FH * .5, 230);
   pushItem({ type: 'olt', text, src, ...b });
+}
+function addModel(name) {
+  const M = window.OLP3D_MODELS && window.OLP3D_MODELS.MODELS[name]; if (!M) return;
+  const s = slide();
+  if (s && !s.items.length && s.motion === 'zweven') s.motion = 'rondje';
+  pushItem({ type: 'model', model: name, name: M.name, x: 530, y: 110, w: 860, h: 860 });
 }
 function addShape(name) {
   pushItem({ type: 'shape', shape: name, x: 610, y: 190, w: 700, h: 700, detail: 5 });
@@ -559,7 +602,7 @@ async function addImageFile(f) {
   if (!r) { toast('Deze afbeelding kan niet gelezen worden', 'err'); return; }
   const sc = Math.min(1000 / r.w, 700 / r.h, 1.5);
   const w = Math.round(r.w * sc), h = Math.round(r.h * sc);
-  pushItem({ type: 'image', src: r.src, x: Math.round((FW - w) / 2), y: Math.round((FH - h) / 2), w, h });
+  pushItem({ type: 'image', src: addMedia(r.src), x: Math.round((FW - w) / 2), y: Math.round((FH - h) / 2), w, h });
 }
 async function handleFiles(files) {
   for (const f of files) {
@@ -567,8 +610,110 @@ async function handleFiles(files) {
     if (n.endsWith('.json')) { if (await confirmDiscard()) loadText(await readFileAs(f, 'text'), f.name, null); return; }
     if (n.endsWith('.svg') || f.type === 'image/svg+xml') addSvgText(await readFileAs(f, 'text'), f.name);
     else if (f.type.startsWith('image/')) await addImageFile(f);
+    else if (f.type.startsWith('video/')) await addVideoFile(f);
     else toast('Dit bestandstype wordt niet ondersteund: ' + f.name, 'err');
   }
+}
+
+// ── video's (zoals in de 2D-app: bestand, link of YouTube) ──────────────
+let replaceVideo = false;
+function extractYouTubeID(url) {
+  if (!url) return null;
+  const pats = [/(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/, /(?:youtube\.com\/watch\?(?:.*&)?v=)([a-zA-Z0-9_-]{11})/, /(?:youtube(?:-nocookie)?\.com\/(?:embed|v|shorts|live)\/)([a-zA-Z0-9_-]{11})/, /^([a-zA-Z0-9_-]{11})$/];
+  for (const p of pats) { const m = String(url).trim().match(p); if (m) return m[1]; }
+  return null;
+}
+function parseYouTubeStart(url) {
+  const m = /[?&#](?:t|start)=([0-9hms:.]+)/i.exec(url || ''); if (!m) return 0;
+  const v = m[1]; if (/^\d+$/.test(v)) return parseInt(v, 10);
+  const hms = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i.exec(v);
+  if (hms) return (parseInt(hms[1] || 0) * 3600) + (parseInt(hms[2] || 0) * 60) + parseInt(hms[3] || 0);
+  return parseTime(v);
+}
+// Deellinks van Dropbox, Google Drive, OneDrive en SharePoint omzetten naar een
+// link die rechtstreeks naar het videobestand wijst (zoals in de 2D-app).
+function cloudVideoUrl(raw) {
+  raw = String(raw || '').trim(); let u; try { u = new URL(raw); } catch (e) { return null; }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  const host = u.hostname.toLowerCase();
+  if (host === 'dropbox.com' || host.endsWith('.dropbox.com')) { if (host.startsWith('dl.')) return { url: u.toString(), service: 'Dropbox' }; u.searchParams.delete('dl'); u.searchParams.set('raw', '1'); return { url: u.toString(), service: 'Dropbox' }; }
+  const gd = raw.match(/drive\.google\.com\/file\/d\/([\w-]{10,})/) || raw.match(/drive\.google\.com\/(?:open|uc)\?(?:.*&)?id=([\w-]{10,})/);
+  if (gd) return { url: 'https://drive.google.com/uc?export=download&id=' + gd[1], service: 'Google Drive' };
+  if (host === '1drv.ms' || host === 'onedrive.live.com') { const b64 = btoa(unescape(encodeURIComponent(raw))).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-'); return { url: 'https://api.onedrive.com/v1.0/shares/u!' + b64 + '/root/content', service: 'OneDrive' }; }
+  if (host.endsWith('.sharepoint.com')) { u.searchParams.set('download', '1'); return { url: u.toString(), service: 'SharePoint' }; }
+  return { url: u.toString(), service: u.hostname };
+}
+function probeVideo(url) {
+  return new Promise(res => {
+    const v = document.createElement('video'); let done = false;
+    const fin = r => { if (done) return; done = true; clearTimeout(t); v.removeAttribute('src'); try { v.load(); } catch (e) {} res(r); };
+    const t = setTimeout(() => fin(null), 15000);
+    v.preload = 'metadata'; v.muted = true;
+    v.addEventListener('loadedmetadata', () => fin({ w: v.videoWidth, h: v.videoHeight, dur: v.duration }));
+    v.addEventListener('error', () => fin(null));
+    v.src = url;
+  });
+}
+function videoBox(meta) {
+  const ar = meta && meta.w && meta.h ? meta.h / meta.w : 9 / 16;
+  let w = 1120, h = Math.round(w * ar); if (h > 760) { h = 760; w = Math.round(h / ar); }
+  return { x: Math.round((FW - w) / 2), y: Math.round((FH - h) / 2 - 20), w, h };
+}
+async function readVideo(f) {
+  if (f.size > 150e6 && !await confirmDlg('Grote video', `Deze video is ${Math.round(f.size / 1e6)} MB. Hij komt in het presentatiebestand en maakt dat groot. Een link (cloud) houdt het bestand klein. Toch toevoegen?`, 'Toevoegen')) return null;
+  busy('Video inlezen…');
+  try { const d = await readFileAs(f, 'url'); return d.startsWith('data:video/') ? d : d.replace(/^data:[^;,]*/, 'data:video/mp4'); } finally { busy(false); }
+}
+async function addVideoFile(f) {
+  const data = await readVideo(f); if (!data) return;
+  const meta = await probeVideo(data);
+  if (!meta) { toast('Deze video kan de browser niet afspelen (gebruik MP4 of WebM)', 'err', 4000); return; }
+  pushItem({ type: 'video', kind: 'file', src: addMedia(data), name: f.name.replace(/\.[^.]+$/, ''), autoplay: true, ...videoBox(meta) });
+}
+async function askText(title, help, value, ok) {
+  const inp = h('input', { type: 'text', value: value || '', placeholder: 'https://…', style: 'font-size:15px' });
+  return dialog({ title, body: h('div', {}, inp, h('p', { class: 'note' }, help)), buttons: [{ label: 'Annuleren', value: null }, { label: ok || 'OK', value: () => inp.value.trim(), pink: true }], onOpen: () => setTimeout(() => { inp.focus(); inp.select(); }, 30) });
+}
+const CLOUD_HELP = 'De link moet openbaar zijn ("iedereen met de link") en naar het videobestand zelf wijzen (MP4 of WebM). Deellinks van Dropbox, OneDrive, SharePoint en Google Drive worden vanzelf omgezet. Tijdens het presenteren is internet nodig.';
+async function addVideoLink() {
+  const raw = await askText('Video via link (cloud)', CLOUD_HELP, '', 'Toevoegen'); if (!raw) return;
+  const c = cloudVideoUrl(raw); if (!c) { toast('Dat is geen geldige link', 'err'); return; }
+  busy('Link controleren…'); const meta = await probeVideo(c.url); busy(false);
+  if (!meta) { toast('Deze link geeft geen afspeelbare video. Is hij openbaar en wijst hij naar het bestand zelf?', 'err', 5000); return; }
+  pushItem({ type: 'video', kind: 'link', src: c.url, name: c.service, autoplay: true, ...videoBox(meta) });
+}
+async function addYouTube() {
+  const raw = await askText('YouTube-video', 'Plak de link van de YouTube-video. Een link met ?t=90 begint vanzelf op die tijd. YouTube heeft internet nodig en kan reclame tonen.', '', 'Toevoegen'); if (!raw) return;
+  const id = extractYouTubeID(raw); if (!id) { toast('Dat is geen YouTube-link', 'err'); return; }
+  pushItem({ type: 'video', kind: 'youtube', src: id, name: 'YouTube', start: parseYouTubeStart(raw), autoplay: true, ...videoBox(null) });
+}
+function openVideoChoice() {
+  dialog({ title: 'Video toevoegen', body: h('div', { class: 'grid2' },
+    h('button', { class: 'btn full', onclick: () => { $('#modal').classList.remove('open'); $('#file-video').click(); } }, '▶ Video (bestand)'),
+    h('button', { class: 'btn full', onclick: () => { $('#modal').classList.remove('open'); addVideoLink(); } }, '☁ Video via link'),
+    h('button', { class: 'btn full', onclick: () => { $('#modal').classList.remove('open'); addYouTube(); } }, '▶ YouTube'),
+    h('button', { class: 'btn full', onclick: () => { $('#modal').classList.remove('open'); $('#file-img').click(); } }, '▣ Afbeelding')) });
+}
+function videoPanel(it, ch) {
+  const out = [];
+  const nm = h('input', { type: 'text', value: it.name, placeholder: 'Naam' }); nm.addEventListener('input', () => { it.name = nm.value; changed({ rebuild: false }); });
+  out.push(row('Naam', nm));
+  if (it.kind === 'youtube' || it.kind === 'link') {
+    const u = h('input', { type: 'text', value: it.kind === 'youtube' ? 'https://youtu.be/' + it.src : it.src });
+    u.addEventListener('change', () => {
+      if (it.kind === 'youtube') { const id = extractYouTubeID(u.value); if (id) { it.src = id; ch(); } else toast('Geen YouTube-link', 'err'); }
+      else { const c = cloudVideoUrl(u.value); if (c) { it.src = c.url; ch(); } else toast('Geen geldige link', 'err'); }
+    });
+    out.push(row('Link', u));
+  } else out.push(h('button', { class: 'btn full', onclick: () => { replaceVideo = true; $('#file-video').click(); } }, 'Andere video kiezen…'));
+  out.push(check('Automatisch starten', it.autoplay, v => { it.autoplay = v; ch(false); }));
+  out.push(check('Geluid aan', !it.muted, v => { it.muted = !v; ch(false); }));
+  out.push(check('Herhalen', it.loop, v => { it.loop = v; ch(false); }));
+  const st = h('input', { type: 'text', value: it.start ? fmtTime(it.start) : '', placeholder: '0:00' }); st.addEventListener('change', () => { it.start = parseTime(st.value); ch(); });
+  const en = h('input', { type: 'text', value: it.end ? fmtTime(it.end) : '', placeholder: 'tot het eind' }); en.addEventListener('change', () => { it.end = parseTime(en.value); ch(false); });
+  out.push(h('div', { class: 'grid2' }, row('Begin', st), row('Einde', en)));
+  out.push(h('p', { class: 'note' }, 'Tijdens het presenteren tekent de lijn eerst een kader; daarna verschijnt de video. Zonder “automatisch starten” start de volgende klik eerst de video. K = afspelen/pauzeren, of klik op de video.' + (it.kind === 'youtube' ? ' YouTube wordt niet meegenomen in een video-opname.' : '')));
+  return out;
 }
 
 // ── bibliotheek & vormen ────────────────────────────────────────────────
@@ -580,7 +725,7 @@ function openLibrary() {
   const fill = q => {
     grid.innerHTML = '';
     lib.filter(e => !q || e.name.toLowerCase().includes(q)).forEach(e => {
-      grid.appendChild(h('button', { title: e.name, onclick: () => { closeFn && closeFn(null); addLibrary(e); } }, h('img', { src: svgDataUrl(e.svg), alt: e.name, loading: 'lazy' }), h('span', {}, e.name)));
+      grid.appendChild(h('button', { title: e.name + ' — klik = 3D-versie, Shift+klik = plat 2D-origineel', onclick: ev => { closeFn && closeFn(null); addLibrary(e, ev.shiftKey); } }, h('img', { src: svgDataUrl(e.svg), alt: e.name, loading: 'lazy' }), h('span', {}, e.name)));
     });
   };
   let closeFn = null;
@@ -597,7 +742,17 @@ function openShapes() {
     b.firstChild.outerHTML = svg;
     grid.appendChild(b);
   });
-  dialog({ title: '3D-vorm uit één doorlopende lijn', wide: true, body: h('div', {}, h('p', { class: 'note' }, 'Echte 3D-vormen: de camera kan er tijdens het presenteren omheen draaien. Kies bij de dia de beweging “Rondje om tekening” om ze goed te laten zien.'), grid), onOpen: (d, close) => { closeFn = close; } });
+  const grid2 = h('div', { class: 'lib dark' });
+  const MM = window.OLP3D_MODELS;
+  if (MM) Object.entries(MM.MODELS).forEach(([k, m]) => {
+    const svg = `<svg viewBox="0 0 100 56" xmlns="http://www.w3.org/2000/svg"><g transform="translate(22,-0.5) scale(.57)"><path d="${MM.preview(k, 5, null, null, 100)}" fill="none" stroke="#ff9ad5" stroke-width="1.1" vector-effect="non-scaling-stroke"/></g></svg>`;
+    const b = h('button', { title: m.name, onclick: () => { closeFn && closeFn(null); addModel(k); } }, h('span', { html: '' }), h('span', {}, m.name));
+    b.firstChild.outerHTML = svg; grid2.appendChild(b);
+  });
+  dialog({ title: '3D-vormen en 3D-tekeningen', wide: true, body: h('div', {},
+    h('p', { class: 'note' }, 'Alles hieronder is echt 3D en getekend met één doorlopende lijn: de camera kan er tijdens het presenteren omheen draaien (beweging “Rondje om tekening”).'),
+    h('div', { class: 'sec' }, h('h4', {}, '3D-tekeningen'), grid2),
+    h('div', { class: 'sec' }, h('h4', {}, 'Wiskundige vormen'), grid)), onOpen: (d, close) => { closeFn = close; } });
 }
 async function askOltText(title, value, ok) {
   O.loadOneLineFont();
@@ -701,6 +856,7 @@ function addButtons() {
     h('button', { onclick: openShapes }, h('span', {}, '◍'), '3D-vorm'),
     h('button', { onclick: addText }, h('span', {}, 'T'), 'Tekst'),
     h('button', { onclick: () => $('#file-img').click() }, h('span', {}, '▣'), 'Afbeelding'),
+    h('button', { onclick: openVideoChoice }, h('span', {}, '▶'), 'Video'),
     h('button', { onclick: () => $('#file-svg').click() }, h('span', {}, '⇪'), 'SVG-bestand'));
 }
 function moveItem(i, d) {
@@ -784,8 +940,20 @@ function panelItem(p) {
       row('Uitlijnen', chips({ left: 'Links', center: 'Midden', right: 'Rechts' }, it.align, v => { it.align = v; ch(); })),
       row('Max. breedte', slider(it.w, 200, 1920, 10, v => { it.w = v; ch(); updateOverlay(); })),
       h('p', { class: 'note' }, 'De tekst verschijnt zodra de lijn de tekening op deze dia af heeft.')));
+  } else if (it.type === 'model') {
+    const MM = window.OLP3D_MODELS, grid = h('div', { class: 'chips' });
+    if (MM) Object.entries(MM.MODELS).forEach(([k, m]) => grid.appendChild(h('button', { class: 'chip' + (k === it.model ? ' on' : ''), onclick: () => { it.model = k; it.name = m.name; ch(); renderPanel(); } }, m.name)));
+    p.appendChild(sec('3D-tekening', grid,
+      row('Voorover', slider(it.tiltX, -90, 90, 1, v => { it.tiltX = v; ch(); })),
+      row('Draaien', slider(it.tiltY, -180, 180, 1, v => { it.tiltY = v; ch(); })),
+      it.model === 'boom' || it.model === 'appel' || it.model === 'herstel' || it.model === 'zandloper' ? row('Detail', slider(it.detail, 1, 10, 1, v => { it.detail = v; ch(); })) : null,
+      row('Kleur', colorCtl(it.color, s.lineColor || th.line, v => { it.color = v; ch(); })),
+      h('p', { class: 'note' }, 'Een echte 3D-tekening uit één doorlopende lijn. Met “Rondje om tekening” (tabblad Dia) draait de camera er tijdens het presenteren omheen.')));
+  } else if (it.type === 'video') {
+    p.appendChild(sec(O.VIDEO_KINDS[it.kind] || 'Video', ...videoPanel(it, ch)));
   } else if (it.type === 'image') {
     p.appendChild(sec('Afbeelding', row('Zichtbaar', slider(it.opacity, .05, 1, .05, v => { it.opacity = v; ch(); })),
+      h('p', { class: 'note' }, 'Tijdens het presenteren tekent de lijn eerst een kader; daarna verschijnt de afbeelding.'),
       h('button', { class: 'btn full', onclick: () => { replaceImage = true; $('#file-img').click(); } }, 'Andere afbeelding kiezen…')));
   }
   // positie
@@ -819,10 +987,12 @@ function panelPres(p) {
   const tnm = h('input', { type: 'text', value: doc.title, placeholder: 'Titel (voor de export)' });
   tnm.addEventListener('input', () => { doc.title = tnm.value; changed({ rebuild: false }); updateDocName(); });
   p.appendChild(sec('Presentatie', row('Titel', tnm)));
-  p.appendChild(sec('Wereld', worlds));
+  p.appendChild(sec('Wereld', worlds, ...worldCustom(st)));
   p.appendChild(sec('Lijn',
     row('Stijl', chips(Object.assign({ auto: 'Bij wereld' }, O.LINE_STYLES), st.lineStyle, v => { st.lineStyle = v; ch(); })),
     row('Dikte', slider(st.lineWidth, 1, 10, .5, v => { st.lineWidth = v; ch(); })),
+    row('Neon-gloed', slider(st.glow, 0, 10, .5, v => { st.glow = v; ch(); })),
+    h('p', { class: 'note' }, 'De gloed hoort bij de lijnstijl Neon (standaard in Nacht, Ruimte, Synthwave, Noorderlicht en Oceaan). 0 = geen gloed.'),
     h('button', { class: 'btn full', onclick: resetLineColors }, 'Alle lijnkleuren terug naar de wereldkleur')));
   p.appendChild(sec('Tempo',
     row('Tekenen', slider(st.drawSpeed, 1, 10, 1, v => { st.drawSpeed = v; ch(false); })),
@@ -834,7 +1004,8 @@ function panelPres(p) {
     row('Tekenen', chips({ rustig: 'Rustig', meekijken: 'Meekijken', inzoomen: 'Inzoomen' }, st.drawCam, v => { st.drawCam = v; ch(false); })),
     h('p', { class: 'note' }, 'Inzoomen: de camera begint dicht op de pen en zoomt uit terwijl de tekening ontstaat.')));
   p.appendChild(sec('Effecten',
-    check('Kaarten achter de tekeningen', st.cards, v => { st.cards = v; ch(); }),
+    row('Dia-kader', chips(O.FRAMES, st.frame, v => { st.frame = v; st.cards = v !== 'geen'; thumbCache.clear(); changed({ list: true }); })),
+    h('p', { class: 'note' }, 'Het kader verschijnt zacht als de camera bij een dia aankomt. “Onzichtbaar”: alleen de lijn en de tekst, zonder kaart.'),
     check('Spookspoor: de rest van de lijn vaag zichtbaar', st.ghost, v => { st.ghost = v; ch(false); }),
     check('Vonkjes bij de pen', st.sparkles, v => { st.sparkles = v; ch(false); }),
     check('Beweegt mee met de muis (parallax)', st.parallax, v => { st.parallax = v; ch(false); }),
@@ -845,11 +1016,29 @@ function panelPres(p) {
     h('button', { class: 'btn full', onclick: recordVideo }, '● Opnemen als video')));
 }
 function setWorld(k) {
-  doc.settings.world = k;
+  doc.settings.world = k; doc.settings.custom = {};
   thumbCache.clear();
   changed({ list: true, panel: true, now: true });
   buildWorldMenu();
 }
+// Wereld naar eigen smaak: lucht, kleuren, sterren, stofjes, raster en mist.
+function worldCustom(st) {
+  const base = O.THEMES[st.world] || O.THEMES.papier, c = st.custom || (st.custom = {});
+  const ch = () => { thumbCache.clear(); changed({ list: true }); };
+  const col = (label, k) => row(label, colorCtl(c[k] || '', base[k], v => { c[k] = v; ch(); }));
+  const tri = (label, k) => row(label, chips({ auto: 'Zoals wereld', aan: 'Aan', uit: 'Uit' }, c[k] || 'auto', v => { c[k] = v; ch(); }));
+  const wrap = h('div', { style: 'display:none' },
+    col('Lucht boven', 'top'), col('Horizon', 'mid'), col('Lucht onder', 'bot'),
+    col('Kaart', 'card'), col('Lijn', 'line'), col('Tekst', 'text'),
+    tri('Sterren', 'stars'), tri('Stofjes', 'dust'), tri('Rasterbodem', 'grid'),
+    row('Mist', slider(c.fog || 1, .2, 3, .1, v => { c.fog = v; ch(); })),
+    h('button', { class: 'btn full', onclick: () => { st.custom = {}; ch(); renderPanel(); } }, '↺ Terug naar de standaard van deze wereld'));
+  const custom = Object.keys(c).some(k => (k === 'fog' ? c[k] && c[k] !== 1 : c[k] && c[k] !== 'auto'));
+  if (custom) wrap.style.display = '';
+  const toggle = h('button', { class: 'btn full', style: 'margin-top:8px', onclick: () => { wrap.style.display = wrap.style.display ? '' : 'none'; } }, '🎨 Wereld aanpassen…');
+  return [toggle, wrap];
+}
+
 function resetLineColors() {
   doc.slides.forEach(s => { s.lineColor = ''; s.items.forEach(it => { if ('color' in it && it.type !== 'text') it.color = ''; if (it.pathColors) it.pathColors = []; if (it.type === 'olt') { it.letterColors = []; it.src = O.composeOneLineText(it.text) || it.src; } }); });
   changed({ list: true, panel: true, now: true }); toast('Alle lijnen gebruiken nu de kleur van de wereld');
@@ -907,15 +1096,15 @@ function demoDoc() {
   const shape = (name, x, y, sz, extra) => Object.assign({ type: 'shape', shape: name, x, y, w: sz, h: sz, detail: 5 }, extra || {});
   const slides = [
     { title: 'Welkom', items: [olt('Welkom', 470, 330), txt('in de derde dimensie', 820, 84, { italic: true })], motion: 'zweven' },
-    { title: 'Eén lijn', items: [lib('wandelaar'), txt('Eén lijn die door de ruimte reist', 930, 70)] },
+    { title: 'Eén lijn', items: [lib('wandelaar', { deform: 'relief', depth: 2.6 }), txt('Eén lijn die door de ruimte reist', 930, 70)] },
     { title: '3D-vormen', items: [shape('bol', 260, 170, 640), shape('hart', 1030, 190, 600), txt('Ook echte 3D-vormen: één doorlopende lijn', 960, 62)], motion: 'rondje' },
-    { title: 'Kompas', items: [lib('kompas', { deform: 'bol', depth: 2.2 }), txt('Tekeningen kun je bol buigen…', 960, 66)], motion: 'rondje' },
-    { title: 'Richting', items: [lib('wegwijzer', { deform: 'cilinder', depth: 1.4 }), txt('…of om een cilinder vouwen', 960, 66)] },
+    { title: 'Kompas', items: [{ type: 'model', model: 'kompas', name: 'Kompas', x: 560, y: 120, w: 800, h: 800 }, txt('De bibliotheek is nu echt 3D', 975, 62)], motion: 'rondje' },
+    { title: 'Richting', items: [{ type: 'model', model: 'wegwijzer', name: 'Wegwijzer', x: 560, y: 100, w: 820, h: 820 }, txt('Draai er gerust omheen', 975, 62)], motion: 'rondje' },
     { title: 'DNA', items: [shape('dna', 640, 110, 640, { tiltX: 8, tiltY: -30 }), olt('van idee tot uitvoering', 930, 150)], motion: 'rondje' },
-    { title: 'Loslaten', items: [lib('boom-loslaten', { deform: 'golf', depth: 1.2 }), txt('Druk op O voor het overzicht', 960, 62, { italic: true })] },
+    { title: 'Loslaten', items: [{ type: 'model', model: 'boom', name: 'Boom', x: 560, y: 90, w: 820, h: 820 }, txt('Druk op O voor het overzicht', 975, 62, { italic: true })], motion: 'rondje' },
     { title: 'Tot ziens', items: [olt('Tot ziens!', 520, 340), txt('3D One Line Prezi', 860, 70, { font: 'Outfit' })] }
   ].map(s => Object.assign(s, { items: s.items.filter(Boolean) }));
-  const d = O.normalizeDoc({ title: 'Voorbeeld — 3D One Line Prezi', settings: { world: 'y2k', travelCam: 'volgen', drawCam: 'rustig' }, slides });
+  const d = O.normalizeDoc({ title: 'Voorbeeld — 3D One Line Prezi', settings: { world: 'y2k', travelCam: 'volgen', drawCam: 'meekijken' }, slides });
   return d;
 }
 function loadDemo() {
@@ -946,6 +1135,8 @@ function from2D(d) {
     (Array.isArray(s.mediaBlocks) ? s.mediaBlocks : []).sort((a, b) => (a.zOrder || 0) - (b.zOrder || 0)).forEach(mb => {
       if (!mb) return;
       if (mb.type === 'svgtext') items.push({ type: 'olt', text: mb.text || '', letterColors: mb.letterColors || [], src: '', x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0 });
+      else if (mb.type === 'video' && mb.src) { const sg = Array.isArray(mb.segments) && mb.segments[0]; items.push({ type: 'video', kind: /^https?:/i.test(mb.src) ? 'link' : 'file', src: /^https?:/i.test(mb.src) ? mb.src : mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, autoplay: mb.autoplay !== false, muted: mb.muted !== false, loop: mb.loop !== false, start: sg ? sg.start || sg[0] || 0 : 0, end: sg ? sg.end || sg[1] || 0 : 0 }); }
+      else if (mb.type === 'youtube' && mb.src) { const sg = Array.isArray(mb.segments) && mb.segments[0]; items.push({ type: 'video', kind: 'youtube', src: mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, autoplay: mb.autoplay !== false, start: (sg && (sg.start || sg[0])) || mb.start || 0, end: sg ? sg.end || sg[1] || 0 : 0 }); }
       else if ((mb.type || 'image') === 'image' && mb.src) items.push({ type: 'image', src: mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, opacity: mb.opacity ?? 1 });
       else skipped++;
     });
@@ -953,8 +1144,11 @@ function from2D(d) {
     if (s.subtitle) { const it = O.normalizeItem({ type: 'text', text: s.subtitle, size: s.subSize || 80, font: s.subFont, bold: s.subBold, italic: s.subItalic, color: s.subColor, align: 'center', w: 1700 }); const m = O.measureTextItem(it); it.x = Math.round((FW - m.w) / 2); it.y = Math.round(FH * .84 - m.h / 2); items.push(it); }
     return { title: s.title || '', cardColor: s.bgColor && s.bgColor.toLowerCase() !== '#ffffff' ? s.bgColor : '', lineColor: s.lineColor && s.lineColor !== '#1a1a1a' ? s.lineColor : '', items };
   });
-  const out = O.normalizeDoc({ title: d.title || '', settings: { world: 'papier', drawSpeed: clamp(((d.settings && d.settings.drawSpeed) || 3) + 2, 1, 10) }, slides });
-  return { doc: out, skipped };
+  // ingesloten video's uit de 2D-presentatie naar de media-opslag
+  const media = {};
+  slides.forEach(sl => sl.items.forEach(it => { if ((it.type === 'video' || it.type === 'image') && /^data:/.test(it.src || '')) { const id = 'm' + Math.random().toString(36).slice(2, 10); media[id] = it.src; it.src = 'media:' + id; } }));
+  const out = O.normalizeDoc({ media, title: d.title || '', settings: { world: 'papier', drawSpeed: clamp(((d.settings && d.settings.drawSpeed) || 3) + 2, 1, 10) }, slides });
+  return { doc: out, skipped: 0 };
 }
 
 // ── bestanden ───────────────────────────────────────────────────────────
@@ -971,7 +1165,7 @@ async function saveBlob(blob, name, desc, accept) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   return 'download';
 }
-function docJSON() { return JSON.stringify(Object.assign({}, doc, { app: '3D One Line Prezi', version: 1 }), null, 1); }
+function docJSON() { return JSON.stringify(Object.assign({}, doc, { app: '3D One Line Prezi', version: 2, media: usedMedia(doc) }), null, 1); }
 async function save(saveAs) {
   const blob = new Blob([docJSON()], { type: 'application/json' });
   if (!saveAs && fileHandle && fileHandle.createWritable) {
@@ -1046,15 +1240,15 @@ async function exportHTML() {
 // Eén los HTML-bestand: Three.js, de motor, de lettertypen en de presentatie zitten erin.
 async function buildExportHTML() {
   {
-    const [three, engine, fonts, icon] = await Promise.all([fetchText('assets/vendor/three.min.js'), fetchText('assets/js/engine.js'), fontFaces(), fetchText('assets/favicon.svg').catch(() => '')]);
+    const [three, engine, fonts, models, icon] = await Promise.all([fetchText('assets/vendor/three.min.js'), fetchText('assets/js/engine.js'), fontFaces(), fetchText('assets/js/models3d.js'), fetchText('assets/favicon.svg').catch(() => '')]);
     const scriptSafe = s => s.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
     const BS = String.fromCharCode(92), SEP = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + ']', 'g');
-    const json = JSON.stringify(doc).replace(/</g, BS + 'u003c').replace(SEP, c => BS + 'u' + c.charCodeAt(0).toString(16));
+    const json = JSON.stringify(Object.assign({}, doc, { media: usedMedia(doc) })).replace(/</g, BS + 'u003c').replace(SEP, c => BS + 'u' + c.charCodeAt(0).toString(16));
     const title = esc(doc.title || baseName());
     const html = `<!DOCTYPE html>\n<html lang="nl">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>${title}</title>\n` +
       (icon ? `<link rel="icon" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(icon)}">\n` : '') +
       `<!-- Gemaakt met 3D One Line Prezi. Three.js (MIT-licentie) is hieronder ingesloten. -->\n<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}\n${fonts}\n</style>\n</head>\n<body>\n` +
-      `<script>${scriptSafe(three)}</script>\n<script>${scriptSafe(engine)}</script>\n<script>OLP3D.startStandalone(${json});</script>\n</body>\n</html>\n`;
+      `<script>${scriptSafe(three)}</script>\n<script>${scriptSafe(engine)}</script>\n<script>${scriptSafe(models)}</script>\n<script>OLP3D.startStandalone(${json});</script>\n</body>\n</html>\n`;
     return html;
   }
 }
@@ -1085,7 +1279,7 @@ let histT = null;
 function scheduleHistory() { clearTimeout(histT); histT = setTimeout(() => snapshotNow(), 380); }
 function snapshotNow(reset) {
   clearTimeout(histT);
-  const s = JSON.stringify(doc);
+  const s = JSON.stringify(doc, noMedia);
   if (reset) { hist.stack = [s]; hist.idx = 0; updateUndo(); return; }
   if (hist.stack[hist.idx] === s) return;
   hist.stack = hist.stack.slice(0, hist.idx + 1); hist.stack.push(s);
@@ -1094,7 +1288,7 @@ function snapshotNow(reset) {
 }
 function updateUndo() { $('#undo').disabled = hist.idx <= 0; $('#redo').disabled = hist.idx >= hist.stack.length - 1; }
 function restoreHist(i) {
-  hist.idx = i; doc = O.normalizeDoc(JSON.parse(hist.stack[i]));
+  const media = doc.media; hist.idx = i; doc = O.normalizeDoc(JSON.parse(hist.stack[i])); doc.media = media;
   cur = clamp(cur, 0, Math.max(0, doc.slides.length - 1)); sel = -1;
   if (tab === 'item') tab = 'slide';
   dirty = true; rebuildNow(); renderAll(); scheduleAutosave();
@@ -1108,7 +1302,7 @@ const DB = {
 };
 let autoT = null;
 function scheduleAutosave() { clearTimeout(autoT); autoT = setTimeout(autosave, 1200); }
-function autosave() { DB.set('autosave', { json: JSON.stringify(doc), fileName, dirty, time: Date.now(), cur }).catch(() => {}); }
+function autosave() { DB.set('autosave', { json: JSON.stringify(doc, noMedia), fileName, dirty, time: Date.now(), cur, media: 2 }).catch(() => {}); }
 async function restoreOrDemo() {
   let saved = null;
   try { saved = await DB.get('autosave'); } catch (e) {}
@@ -1116,6 +1310,7 @@ async function restoreOrDemo() {
     try {
       const d = JSON.parse(saved.json);
       if (d && Array.isArray(d.slides) && d.slides.length) {
+        if (!d.media) { d.media = {}; for (const sl of d.slides) for (const it of (sl.items || [])) if (typeof it.src === 'string' && it.src.startsWith('media:')) { const v = await DB.get('m:' + it.src.slice(6)).catch(() => null); if (v) d.media[it.src.slice(6)] = v; } }
         cur = saved.cur || 0; setDoc(d, true); fileName = saved.fileName || ''; dirty = !!saved.dirty;
         renderAll(); fitAll(false); snapshotNow(true);
         if (saved.dirty) toast('Je laatste werk is teruggezet', 'ok', 3200);
@@ -1136,6 +1331,7 @@ function bindTop() {
   const acts = {
     new: newDoc, open: openFile, save: () => save(false), saveas: () => save(true), import2d: openFile, export: exportHTML, record: recordVideo,
     demo: async () => { if (await confirmDiscard()) { loadDemo(); toast('Voorbeeld geladen', 'ok'); } },
+    video: () => $('#file-video').click(), videolink: addVideoLink, youtube: addYouTube,
     slide: () => addSlide(), library: openLibrary, svgfile: () => $('#file-svg').click(), olt: addOlt, shape: openShapes, text: addText, image: () => $('#file-img').click()
   };
   $$('[data-act]').forEach(b => b.addEventListener('click', () => { closeMenus(); acts[b.dataset.act](); }));
@@ -1150,13 +1346,18 @@ function bindTop() {
   $$('.seg button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
   $$('.tabs button').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; renderTabs(); renderPanel(); }));
   $('#file-json').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadText(await readFileAs(f, 'text'), f.name, null); });
+  $('#file-video').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    if (replaceVideo && item() && item().type === 'video') { replaceVideo = false; const it = item(); const data = await readVideo(f); if (!data) return; it.kind = 'file'; it.src = addMedia(data); it.name = f.name.replace(/\.[^.]+$/, ''); changed({ panel: true }); return; }
+    replaceVideo = false; addVideoFile(f);
+  });
   $('#file-svg').addEventListener('change', async e => { const fs = [...e.target.files]; e.target.value = ''; for (const f of fs) addSvgText(await readFileAs(f, 'text'), f.name); });
   $('#file-img').addEventListener('change', async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     if (replaceImage && item() && item().type === 'image') {
       replaceImage = false;
       const r = await compressImage(await readFileAs(f, 'url'), 2400, 2400); if (!r) return;
-      const it = item(); it.src = r.src; it.h = Math.round(it.w * r.h / r.w); changed({ panel: true }); updateOverlay(); return;
+      const it = item(); it.src = addMedia(r.src); it.h = Math.round(it.w * r.h / r.w); changed({ panel: true }); updateOverlay(); return;
     }
     replaceImage = false; addImageFile(f);
   });
@@ -1183,6 +1384,7 @@ function bindKeys() {
     if (ctrl && (k === 'y' || k === 'Y')) { e.preventDefault(); redo(); return; }
     if (ctrl && (k === 'd' || k === 'D')) { e.preventDefault(); item() ? duplicateItem() : slide() && duplicateSlide(cur); return; }
     if (ctrl && (k === 'c' || k === 'C' || k === 'x' || k === 'X')) { if (item()) { e.preventDefault(); clip = JSON.parse(JSON.stringify(item())); if (k === 'x' || k === 'X') deleteItem(sel); toast(k === 'x' || k === 'X' ? 'Geknipt' : 'Gekopieerd'); } return; }
+    if (k === 'k' || k === 'K') { return; }
     if (k === 'Delete' || k === 'Backspace') { if (item()) { e.preventDefault(); deleteItem(sel); } return; }
     if (k === 'Escape') { if (sel >= 0) { sel = -1; tab = 'slide'; renderTabs(); renderPanel(); updateOverlay(); } else if (mode === 'slide') setMode('world'); closeMenus(); return; }
     if (k === 'Tab' && !ctrl) { e.preventDefault(); setMode(mode === 'world' ? 'slide' : 'world'); return; }
@@ -1227,7 +1429,7 @@ function init() {
   document.fonts && document.fonts.ready.then(() => { if (doc.slides.length) { rebuildNow(); thumbCache.clear(); renderSlides(); } });
   restoreOrDemo();
   // haakjes voor testen vanuit de console
-  window.__olp = { get doc() { return doc; }, world: () => world, present, loadDemo, applyLayout, setMode, selectSlide, loadText, buildExportHTML };
+  window.__olp = { get doc() { return doc; }, get player() { return presenting; }, world: () => world, present, loadDemo, applyLayout, setMode, selectSlide, loadText, buildExportHTML };
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

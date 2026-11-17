@@ -23,6 +23,8 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = t => t * t * (3 - 2 * t);
 const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 const easeSine = t => -(Math.cos(Math.PI * t) - 1) / 2;
+// Vliegen: vertrekt en komt aan op het tekentempo en gaat onderweg iets vlotter.
+const travelEase = u => { const a = .7, p = (u + a * (1 - Math.cos(Math.PI * u)) / Math.PI) / (1 + 2 * a / Math.PI); return p * .85 + (u * u * (3 - 2 * u)) * .15; };
 const DEG = Math.PI / 180;
 function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + ':' + s.length; }
 const SAFE_COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|hsla?\([\d\s.,%deg]+\)|[a-z]{3,20})$/i;
@@ -44,8 +46,28 @@ const THEMES = {
   y2k:      { name: 'Y2K pastel',    top: '#c9b0f7', mid: '#ffd6ef', bot: '#fff1c9', card: '#fff7fd', line: '#2a1458', text: '#2a1458', dust: '#ff5eb8', dustOp: .8,  style: 'klei',  sparkle: true, grid: '#ff8fd0', shadow: true, fog: 1.1 },
   mist:     { name: 'Mist',          top: '#eef2f4', mid: '#dbe3e8', bot: '#c2ced6', card: '#f7fafb', line: '#2f3e48', text: '#22303a', dust: '#8a9ba7', dustOp: .5,  style: 'inkt',  shadow: true,  fog: .55 },
   blauwdruk:{ name: 'Blauwdruk',     top: '#0b2950', mid: '#123a6b', bot: '#0e3260', card: '#15457a', line: '#ffffff', text: '#eaf3ff', dust: '#9cc3ff', dustOp: .6,  style: 'inkt',  grid: '#4b80bf', fog: 1.2, edge: '#5d8fd0' },
-  zonsondergang: { name: 'Zonsondergang', top: '#3b2a6b', mid: '#ff9e7a', bot: '#ffd29a', card: '#fff4ea', line: '#3a1d4f', text: '#3a1d4f', dust: '#fff0c0', dustOp: .7, style: 'klei', shadow: true, fog: 1.0 }
+  zonsondergang: { name: 'Zonsondergang', top: '#3b2a6b', mid: '#ff9e7a', bot: '#ffd29a', card: '#fff4ea', line: '#3a1d4f', text: '#3a1d4f', dust: '#fff0c0', dustOp: .7, style: 'klei', shadow: true, fog: 1.0 },
+  ruimte:   { name: 'Ruimte (zonder sterren)', top: '#03040f', mid: '#0d1233', bot: '#1d1650', card: '#121838', line: '#68e3d6', text: '#f3f0ff', dust: '#9fb0ff', dustOp: .45, style: 'neon', fog: 1.4, edge: '#3a4380' },
+  synthwave:{ name: 'Synthwave',     top: '#12022a', mid: '#4a1460', bot: '#ff4f9a', card: '#24093a', line: '#ffd166', text: '#ffe9f5', dust: '#ff9de2', dustOp: .7, style: 'neon', stars: true, grid: '#ff4f9a', fog: 1.2, edge: '#a33b9a' },
+  aurora:   { name: 'Noorderlicht',  top: '#021208', mid: '#0b3b3a', bot: '#1a0f33', card: '#0f2a2c', line: '#9cffb8', text: '#eafff1', dust: '#c6ffdc', dustOp: .7, style: 'neon', stars: true, fog: 1.3, edge: '#2f6b58' },
+  oceaan:   { name: 'Oceaan',        top: '#0a2a43', mid: '#0f4c6b', bot: '#06283d', card: '#0f3d57', line: '#7ff3e1', text: '#e6fbff', dust: '#a8f0ff', dustOp: .6, style: 'neon', fog: 1.0, edge: '#2f7a9c' },
+  bos:      { name: 'Bos',           top: '#e3efd4', mid: '#bcd6a4', bot: '#7fa36b', card: '#f6faef', line: '#203a1c', text: '#1d3319', dust: '#5f7f4a', dustOp: .5, style: 'inkt', fog: .9 },
+  woestijn: { name: 'Woestijn',      top: '#f8dfb2', mid: '#f0b77b', bot: '#c98a52', card: '#fff6e8', line: '#4a2a14', text: '#3d2210', dust: '#fff3d6', dustOp: .6, style: 'klei', fog: 1.0 },
+  krijtbord:{ name: 'Krijtbord',     top: '#1c3529', mid: '#24463a', bot: '#182e24', card: '#2b5244', line: '#f4f1e8', text: '#f4f1e8', dust: '#e8efe6', dustOp: .3, style: 'inkt', fog: 1.1, edge: '#4f7b69' },
+  snoep:    { name: 'Suikerspin',    top: '#a8e6ff', mid: '#ffc6e9', bot: '#fff4b8', card: '#ffffff', line: '#d6337f', text: '#7a1f55', dust: '#ffffff', dustOp: .9, style: 'klei', sparkle: true, fog: 1.1 },
+  zwartwit: { name: 'Zwart-wit',     top: '#ffffff', mid: '#f1f1f1', bot: '#d9d9d9', card: '#ffffff', line: '#000000', text: '#000000', dust: '#999999', dustOp: .4, style: 'inkt', grid: '#cfcfcf', fog: 1.0 }
 };
+// Thema met de eigen aanpassingen uit de instellingen (lucht, sterren, raster, mist…)
+const CUSTOM_COLORS = ['top', 'mid', 'bot', 'card', 'line', 'text'];
+function themeOf(st) {
+  const b = THEMES[st && st.world] || THEMES.papier, c = (st && st.custom) || {}, t = Object.assign({}, b);
+  CUSTOM_COLORS.forEach(k => { if (c[k]) t[k] = c[k]; });
+  if (c.stars === 'aan') t.stars = true; else if (c.stars === 'uit') t.stars = false;
+  if (c.dust === 'uit') t.dustOp = 0; else if (c.dust === 'aan') t.dustOp = Math.max(.5, b.dustOp || 0);
+  if (c.grid === 'aan') t.grid = b.grid || t.line; else if (c.grid === 'uit') t.grid = null;
+  if (c.fog) t.fog = (b.fog || 1) * c.fog;
+  return t;
+}
 const LINE_STYLES = { inkt: 'Inkt (plat)', neon: 'Neon (gloed)', klei: 'Klei (3D)' };
 const FONTS = ['Cormorant Garamond', 'Playfair Display', 'Lora', 'Merriweather', 'Source Serif 4', 'Outfit', 'DM Sans', 'Raleway', 'Silkscreen', 'VT323'];
 const FONT_FILES = {
@@ -60,21 +82,26 @@ const FONT_FILES = {
   'Silkscreen': { '400': 'silkscreen-400', '700': 'silkscreen-700' },
   'VT323': { '400': 'vt323-400' }
 };
-const SHAPE_DEFORMS = { plat: 'Plat', bol: 'Bol', golf: 'Golf', cilinder: 'Gebogen (cilinder)', draai: 'Gedraaid', lagen: 'Lagen (per pad)' };
+const SHAPE_DEFORMS = { plat: 'Plat', relief: 'Reliëf (bolt op)', bol: 'Bol', golf: 'Golf', cilinder: 'Gebogen (cilinder)', draai: 'Gedraaid', lagen: 'Lagen (per pad)' };
+const VIDEO_KINDS = { file: 'Video (bestand)', link: 'Video via link', youtube: 'YouTube' };
+const YT_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const MEDIA_RE = /^media:[\w-]{1,64}$/;
 const LINKS = { vloeiend: 'Vloeiend', lus: 'Looping', spiraal: 'Kurkentrekker', golf: 'Golf', recht: 'Recht' };
 const MOTIONS = { zweven: 'Zweven', rondje: 'Rondje om tekening', stil: 'Stil' };
 
 // ── Document ────────────────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   world: 'papier', lineStyle: 'auto', lineWidth: 3, drawSpeed: 5, travelSpeed: 5,
-  travelCam: 'volgen', drawCam: 'rustig', cards: true, ghost: true, sparkles: true,
-  parallax: true, intro: true, finale: true, sound: false, autoplay: 0, hold: 3
+  travelCam: 'volgen', drawCam: 'meekijken', cards: true, ghost: true, sparkles: true,
+  parallax: true, intro: true, finale: true, sound: false, autoplay: 0, hold: 3,
+  frame: 'kaart', glow: 5, custom: {}
 };
+const FRAMES = { kaart: 'Kaart', rand: 'Alleen een rand', geen: 'Onzichtbaar' };
 let idSeq = 0;
 function newId() { return 'i' + Date.now().toString(36) + (idSeq++).toString(36); }
 function normalizeItem(it) {
   if (!it || typeof it !== 'object') return null;
-  const type = ['svg', 'olt', 'shape', 'text', 'image'].includes(it.type) ? it.type : null;
+  const type = ['svg', 'olt', 'shape', 'model', 'text', 'image', 'video'].includes(it.type) ? it.type : null;
   if (!type) return null;
   const b = { id: strOr(it.id, '') || newId(), type, x: numOr(it.x, 0), y: numOr(it.y, 0), w: Math.max(4, numOr(it.w, 400)), h: Math.max(4, numOr(it.h, 300)), rot: numOr(it.rot, 0) };
   if (type === 'svg' || type === 'olt') {
@@ -96,6 +123,23 @@ function normalizeItem(it) {
     b.color = it.color ? safeColor(it.color, '') : '';
     b.detail = clamp(Math.round(numOr(it.detail, 5)), 1, 10);
     b.tiltX = numOr(it.tiltX, 18); b.tiltY = numOr(it.tiltY, -24);
+  } else if (type === 'model') {
+    const M = G.OLP3D_MODELS && G.OLP3D_MODELS.MODELS;
+    b.model = strOr(it.model, 'kompas'); if (M && !M[b.model]) b.model = 'kompas';
+    const tl = (M && M[b.model] && M[b.model].tilt) || [12, -26];
+    b.name = strOr(it.name, '');
+    b.color = it.color ? safeColor(it.color, '') : '';
+    b.detail = clamp(Math.round(numOr(it.detail, 5)), 1, 10);
+    b.tiltX = numOr(it.tiltX, tl[0]); b.tiltY = numOr(it.tiltY, tl[1]);
+  } else if (type === 'video') {
+    b.kind = VIDEO_KINDS[it.kind] ? it.kind : 'file';
+    let src = strOr(it.src, '');
+    if (b.kind === 'youtube') src = YT_ID_RE.test(src) ? src : '';
+    else if (!(MEDIA_RE.test(src) || /^(data:video\/|https?:\/\/)/i.test(src))) src = '';
+    b.src = src;
+    b.name = strOr(it.name, '');
+    b.autoplay = !!it.autoplay; b.muted = !!it.muted; b.loop = !!it.loop;
+    b.start = Math.max(0, numOr(it.start, 0)); b.end = Math.max(0, numOr(it.end, 0));
   } else if (type === 'text') {
     b.w = Math.max(40, numOr(it.w, 1600));
     b.text = strOr(it.text, 'Tekst');
@@ -106,7 +150,7 @@ function normalizeItem(it) {
     b.align = ['left', 'center', 'right'].includes(it.align) ? it.align : 'center';
   } else if (type === 'image') {
     const src = strOr(it.src, '');
-    b.src = /^(data:image\/|https?:\/\/)/i.test(src) ? src : '';
+    b.src = (MEDIA_RE.test(src) || /^(data:image\/|https?:\/\/)/i.test(src)) ? src : '';
     b.opacity = clamp(numOr(it.opacity, 1), 0, 1);
   }
   return b;
@@ -141,9 +185,25 @@ function normalizeDoc(d) {
   st.drawCam = ['rustig', 'meekijken', 'inzoomen'].includes(st.drawCam) ? st.drawCam : 'rustig';
   ['cards', 'ghost', 'sparkles', 'parallax', 'intro', 'finale', 'sound'].forEach(k => { st[k] = !!st[k]; });
   st.autoplay = clamp(numOr(st.autoplay, 0), 0, 120);
+  if (!FRAMES[st.frame]) st.frame = 'kaart';
+  if (d.settings && d.settings.cards === false && !d.settings.frame) st.frame = 'geen';
+  st.cards = st.frame !== 'geen';
+  st.glow = clamp(numOr(st.glow, 5), 0, 10);
+  const cu = (st.custom && typeof st.custom === 'object') ? st.custom : {}, cc = {};
+  CUSTOM_COLORS.forEach(k => { if (cu[k]) { const v = safeColor(cu[k], ''); if (v) cc[k] = v; } });
+  ['stars', 'dust', 'grid'].forEach(k => { cc[k] = ['aan', 'uit'].includes(cu[k]) ? cu[k] : 'auto'; });
+  cc.fog = clamp(numOr(cu.fog, 1), .2, 3);
+  st.custom = cc;
   st.hold = clamp(numOr(st.hold, 3), 0, 60);
   const slides = (Array.isArray(d.slides) ? d.slides : []).map(normalizeSlide);
-  return { app: '3D One Line Prezi', version: 1, title: strOr(d.title, ''), settings: st, slides };
+  // media (afbeeldingen, video's) apart bewaard; elementen verwijzen ernaar met "media:<id>"
+  const media = {};
+  if (d.media && typeof d.media === 'object') for (const [k, v] of Object.entries(d.media)) { if (/^[\w-]{1,64}$/.test(k) && typeof v === 'string' && /^data:(image|video)\//i.test(v)) media[k] = v; }
+  return { app: '3D One Line Prezi', version: 2, title: strOr(d.title, ''), settings: st, slides, media };
+}
+function resolveSrc(doc, src) {
+  if (src && MEDIA_RE.test(src)) return (doc && doc.media && doc.media[src.slice(6)]) || '';
+  return src || '';
 }
 
 // ── SVG lezen ───────────────────────────────────────────────────────────
@@ -572,13 +632,68 @@ function deformZ(kind, depth, x, y, pathIdx, pathCount) {
   }
   return [x, y, 0];
 }
+// Reliëf: de tekening "bolt op". Gebieden die door lijnen omsloten worden
+// (een figuur, een hand) krijgen hoogte naar hun afstand tot de buitenkant,
+// zoals een opgeblazen ballon. Geeft een functie (frame-px) → hoogte 0..1.
+const reliefCache = new Map();
+function reliefField(runs, key) {
+  if (reliefCache.has(key)) return reliefCache.get(key);
+  const C = 8, OX = -240, OY = -240, GW = Math.ceil((FW + 480) / C), GH = Math.ceil((FH + 480) / C), N = GW * GH;
+  const cell = new Uint8Array(N); // 0 leeg, 1 lijn, 2 buiten
+  const R = 2;
+  runs.forEach(r => { if (!r.visible) return; r.pts.forEach(p => {
+    const gx = Math.floor((p.x - OX) / C), gy = Math.floor((p.y - OY) / C);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) { if (dx * dx + dy * dy > R * R + 1) continue; const x = gx + dx, y = gy + dy; if (x >= 0 && y >= 0 && x < GW && y < GH) cell[y * GW + x] = 1; }
+  }); });
+  // buitenkant volgen vanaf de randen
+  const q = new Int32Array(N); let qh = 0, qt = 0;
+  const seed = i => { if (cell[i] === 0) { cell[i] = 2; q[qt++] = i; } };
+  for (let x = 0; x < GW; x++) { seed(x); seed((GH - 1) * GW + x); }
+  for (let y = 0; y < GH; y++) { seed(y * GW); seed(y * GW + GW - 1); }
+  while (qh < qt) { const i = q[qh++], x = i % GW, y = (i / GW) | 0; if (x > 0) seed(i - 1); if (x < GW - 1) seed(i + 1); if (y > 0) seed(i - GW); if (y < GH - 1) seed(i + GW); }
+  // afstand tot de buitenkant (alles wat niet buiten is)
+  const dist = new Float32Array(N).fill(1e9); qh = qt = 0;
+  for (let i = 0; i < N; i++) if (cell[i] === 2) { dist[i] = 0; q[qt++] = i; }
+  while (qh < qt) {
+    const i = q[qh++], x = i % GW, y = (i / GW) | 0, d = dist[i] + 1;
+    const nb = [x > 0 ? i - 1 : -1, x < GW - 1 ? i + 1 : -1, y > 0 ? i - GW : -1, y < GH - 1 ? i + GW : -1];
+    for (const j of nb) if (j >= 0 && dist[j] > d) { dist[j] = d; q[qt++] = j; }
+  }
+  let mx = 0; for (let i = 0; i < N; i++) if (cell[i] !== 2 && dist[i] < 1e8) mx = Math.max(mx, dist[i]);
+  let h = new Float32Array(N);
+  if (mx > 0) for (let i = 0; i < N; i++) h[i] = cell[i] === 2 ? 0 : Math.sqrt(Math.min(dist[i], mx) / mx);
+  // twee keer vervagen voor een zachte bolling
+  for (let pass = 0; pass < 3; pass++) {
+    const o = new Float32Array(N);
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      let s = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) { s += h[yy * GW + xx]; n++; } }
+      o[y * GW + x] = s / n;
+    }
+    h = o;
+  }
+  const f = (px, py) => {
+    const gx = (px - OX) / C - .5, gy = (py - OY) / C - .5;
+    const x0 = clamp(Math.floor(gx), 0, GW - 2), y0 = clamp(Math.floor(gy), 0, GH - 2), tx = clamp(gx - x0, 0, 1), ty = clamp(gy - y0, 0, 1);
+    const a = h[y0 * GW + x0], b = h[y0 * GW + x0 + 1], c = h[(y0 + 1) * GW + x0], d = h[(y0 + 1) * GW + x0 + 1];
+    return lerp(lerp(a, b, tx), lerp(c, d, tx), ty);
+  };
+  if (reliefCache.size > 60) reliefCache.clear();
+  reliefCache.set(key, f);
+  return f;
+}
 // Maakt de puntenlijst (lokaal 3D) van één lijnelement.
 // Resultaat: { p:[[x,y,z]], c:[hex], v:[bool] }  (v[k] = stuk k-1→k getekend)
 function itemPolyline(it, slide, theme) {
   const out = { p: [], c: [], v: [] };
   const defColor = it.color || slide.lineColor || theme.line;
-  if (it.type === 'shape') {
-    const pts = shapePoints(it.shape, it.detail);
+  if (it.type === 'shape' || it.type === 'model') {
+    let pts, vis = null;
+    if (it.type === 'model') {
+      const md = G.OLP3D_MODELS && G.OLP3D_MODELS.build(it.model, it.detail);
+      if (!md) return out;
+      pts = md.p; vis = md.v;
+    } else pts = shapePoints(it.shape, it.detail);
     const e = new THREE.Euler((it.tiltX ?? 18) * DEG, (it.tiltY ?? -24) * DEG, 0, 'YXZ');
     const [cx, cy] = framePxToLocal(it.x + it.w / 2, it.y + it.h / 2);
     // De vorm zweeft iets voor de kaart; door het perspectief lijkt hij dan
@@ -586,17 +701,17 @@ function itemPolyline(it, slide, theme) {
     const r0 = Math.min(it.w, it.h) / 2 * U, lift = r0 * .55, sc = r0 * (11.2 - lift) / 11.2;
     const v = new THREE.Vector3();
     let prev = null;
-    // herbemonsteren op afstand ~0.03 eenheden
+    // herbemonsteren op afstand ~0.03 eenheden; een pen-omhoog-sprong niet opvullen
     const raw = pts.map(p => { v.set(p[0], p[1], p[2]).applyEuler(e); return [cx + v.x * sc, cy + v.y * sc, v.z * sc + lift]; });
     for (let k = 0; k < raw.length; k++) {
-      const q = raw[k];
-      if (prev) {
+      const q = raw[k], down = vis ? !!vis[k] : true;
+      if (prev && down) {
         const dd = Math.hypot(q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]);
-        if (dd < .025 && k < raw.length - 1) continue;
+        if (dd < .02 && k < raw.length - 1 && (!vis || vis[k + 1])) continue;
         const n = Math.ceil(dd / .05);
         for (let j = 1; j < n; j++) { const t = j / n; out.p.push([lerp(prev[0], q[0], t), lerp(prev[1], q[1], t), lerp(prev[2], q[2], t)]); out.c.push(defColor); out.v.push(true); }
       }
-      out.p.push(q); out.c.push(defColor); out.v.push(!!prev); prev = q;
+      out.p.push(q); out.c.push(defColor); out.v.push(!!prev && down); prev = q;
     }
     return out;
   }
@@ -638,11 +753,12 @@ function itemPolyline(it, slide, theme) {
   }
   if (flip) { runs.reverse(); runs.forEach(r => r.pts.reverse()); }
   const dk = it.deform || 'plat', depth = it.depth ?? 1.5;
+  const field = dk === 'relief' ? reliefField(runs, hashStr(svgText) + '|' + [it.x, it.y, it.w, it.h, it.rot, flip].join(',')) : null;
   let last = null;
   runs.forEach(r => {
     r.pts.forEach((p, k) => {
       const [lx, ly] = framePxToLocal(p.x, p.y);
-      const q = deformZ(dk, depth, lx, ly, r.pi, visCount);
+      const q = field ? [lx, ly, depth * field(p.x, p.y)] : deformZ(dk, depth, lx, ly, r.pi, visCount);
       let vis = r.visible && k > 0;
       if (k === 0 && last) {
         // sprong naar een los deel: pen omhoog
@@ -652,6 +768,28 @@ function itemPolyline(it, slide, theme) {
       }
       out.p.push(q); out.c.push(r.col); out.v.push(vis); last = q;
     });
+  });
+  return out;
+}
+// Lijnkader rond een afbeelding of video: de pen tekent eerst het kader.
+function framePolyline(it, slide, theme) {
+  const col = it.color || slide.lineColor || theme.line;
+  const pad = 16, r = 28, x0 = it.x - pad, y0 = it.y - pad, w = it.w + pad * 2, h = it.h + pad * 2;
+  const pts = [];
+  const line = (ax, ay, bx, by) => { const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay) / 4)); for (let k = 1; k <= n; k++) pts.push({ x: lerp(ax, bx, k / n), y: lerp(ay, by, k / n) }); };
+  const corner = (cx, cy, a0) => { for (let k = 1; k <= 10; k++) { const a = (a0 + 9 * k) * DEG; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } };
+  pts.push({ x: x0, y: y0 + h - r });
+  line(x0, y0 + h - r, x0, y0 + r); corner(x0 + r, y0 + r, 180);
+  line(x0 + r, y0, x0 + w - r, y0); corner(x0 + w - r, y0 + r, 270);
+  line(x0 + w, y0 + r, x0 + w, y0 + h - r); corner(x0 + w - r, y0 + h - r, 0);
+  line(x0 + w - r, y0 + h, x0 + r, y0 + h); corner(x0 + r, y0 + h - r, 90);
+  const rot = (it.rot || 0) * DEG, cR = Math.cos(rot), sR = Math.sin(rot), bx = it.x + it.w / 2, by = it.y + it.h / 2;
+  const out = { p: [], c: [], v: [] };
+  pts.forEach((p, k) => {
+    let x = p.x, y = p.y;
+    if (rot) { const dx = x - bx, dy = y - by; x = bx + dx * cR - dy * sR; y = by + dx * sR + dy * cR; }
+    const [lx, ly] = framePxToLocal(x, y);
+    out.p.push([lx, ly, .02]); out.c.push(col); out.v.push(k > 0);
   });
   return out;
 }
@@ -708,10 +846,11 @@ function buildTrack(doc, stations, theme, opts) {
   const colorObj = new THREE.Color();
   const slidePolys = doc.slides.map((slide, i) => {
     const S = stations[i];
-    const items = slide.items.filter(it => it.type === 'svg' || it.type === 'olt' || it.type === 'shape');
+    const items = slide.items.filter(it => it.type === 'svg' || it.type === 'olt' || it.type === 'shape' || it.type === 'model' || it.type === 'image' || it.type === 'video');
     let poly = { p: [], c: [], v: [] };
     let prevItem = null;
-    const lineItems = items.map(it => ({ it, pl: itemPolyline(it, slide, theme) })).filter(x => x.pl.p.length > 1);
+    const marks = [];
+    const lineItems = items.map(it => ({ it, pl: (it.type === 'image' || it.type === 'video') ? framePolyline(it, slide, theme) : itemPolyline(it, slide, theme) })).filter(x => x.pl.p.length > 1);
     if (!lineItems.length) {
       // Geen tekening: een zwierige onderstreping, zodat de lijn doorloopt
       const col = slide.lineColor || theme.line, pts = [];
@@ -736,6 +875,7 @@ function buildTrack(doc, stations, theme, opts) {
         pl.v[0] = !penUp;
       }
       poly.p.push(...pl.p); poly.c.push(...pl.c); poly.v.push(...pl.v);
+      if (it.id) marks.push({ id: it.id, idx: poly.p.length - 1 });
       prevItem = it;
     });
     if (poly.v.length) poly.v[0] = false;
@@ -743,7 +883,7 @@ function buildTrack(doc, stations, theme, opts) {
     const v = new THREE.Vector3();
     const wp = poly.p.map(p => v.set(p[0], p[1], p[2]).applyMatrix4(S.m).clone());
     let minZ = 0; poly.p.forEach(p => { if (p[0] > -8.5 && p[0] < 8.5 && p[1] > -5 && p[1] < 5) minZ = Math.min(minZ, p[2]); });
-    return { wp, c: poly.c, v: poly.v, minZ };
+    return { wp, c: poly.c, v: poly.v, minZ, marks };
   });
 
   const toPhase = (kind, slide, wp, cols, vis, speedW) => {
@@ -778,8 +918,8 @@ function buildTrack(doc, stations, theme, opts) {
     const out = [];
     let Uv = new THREE.Vector3(0, 1, 0);
     const T = new THREE.Vector3(), Vv = new THREE.Vector3();
-    const R = clamp(L * .4 / (2 * Math.PI) * 1.35, .9, 6);
-    const turns = clamp(Math.round(L / 7), 2, 9), waves = clamp(Math.round(L / 11), 1, 5), amp = clamp(dist * .07, .5, 3);
+    const R = clamp(L * .4 / (2 * Math.PI) * 1.1, .6, 3.2);
+    const turns = clamp(Math.round(L / 7), 2, 9), waves = clamp(Math.round(L / 11), 1, 5), amp = clamp(dist * .04, .3, 1.6);
     for (let k = 0; k <= n; k++) {
       const t = k / n;
       T.copy(raw[Math.min(n, k + 1)]).sub(raw[Math.max(0, k - 1)]).normalize();
@@ -790,7 +930,7 @@ function buildTrack(doc, stations, theme, opts) {
       if (style === 'lus') {
         if (t > .3 && t < .7) { const u = (t - .3) / .4, a = 2 * Math.PI * u; p.addScaledVector(T, R * Math.sin(a)).addScaledVector(Uv, R * (1 - Math.cos(a))); }
       } else if (style === 'spiraal') {
-        const env = Math.sin(Math.PI * t), a = turns * 2 * Math.PI * t, r = clamp(dist * .05, .35, 2.2) * env;
+        const env = Math.sin(Math.PI * t), a = turns * 2 * Math.PI * t, r = clamp(dist * .03, .25, 1.2) * env;
         p.addScaledVector(Uv, Math.sin(a) * r).addScaledVector(Vv, (1 - Math.cos(a)) * r * .5);
       } else if (style === 'golf') {
         p.addScaledVector(Uv, Math.sin(2 * Math.PI * waves * t) * amp * Math.sin(Math.PI * t));
@@ -833,7 +973,7 @@ function buildTrack(doc, stations, theme, opts) {
       ti = phases.length;
       phases.push(toPhase('travel', i, pts, (k, n) => cc.copy(ca).lerp(cb, k / Math.max(1, n - 1)), pts.map((_, k) => k > 0), 1));
     }
-    info.push({ draw: di, travel: ti, minZ: sp.minZ });
+    info.push({ draw: di, travel: ti, minZ: sp.minZ, marks: sp.marks });
   });
   if (opts.finale) {
     const lp = slidePolys[N - 1], L = stations[N - 1];
@@ -846,6 +986,8 @@ function buildTrack(doc, stations, theme, opts) {
   // globale tijd-as
   let s = 0;
   phases.forEach(ph => { ph.s0 = s; s += ph.len; ph.s1 = s; });
+  // per element: het moment waarop de lijn het af heeft (afbeelding/video verschijnt dan)
+  info.forEach(inf => { const ph = phases[inf.draw]; inf.reveal = {}; (inf.marks || []).forEach(m => { inf.reveal[m.id] = ph.s0 + ph.S[Math.min(ph.n - 1, m.idx)]; }); });
   return { phases, info, total: s };
 }
 
@@ -960,7 +1102,7 @@ function measureTextItem(it) {
   const h = lines.length * it.size * 1.25 + it.size * .2;
   return { w, h, lines };
 }
-function textTexture(it, color) {
+function textTexture(it, color, halo) {
   const sc = 2;
   const m = measureTextItem(it);
   const c = document.createElement('canvas');
@@ -970,9 +1112,76 @@ function textTexture(it, color) {
   x.font = fontCss(it, it.size); x.fillStyle = color; x.textBaseline = 'middle';
   x.textAlign = it.align || 'center';
   const ax = it.align === 'left' ? it.size * .15 : it.align === 'right' ? m.w - it.size * .15 : m.w / 2;
+  if (halo) { x.shadowColor = halo; x.shadowBlur = Math.max(4, it.size * .35); m.lines.forEach((l, k) => x.fillText(l, ax, it.size * .1 + it.size * 1.25 * (k + .5))); x.shadowBlur = Math.max(2, it.size * .12); }
   m.lines.forEach((l, k) => x.fillText(l, ax, it.size * .1 + it.size * 1.25 * (k + .5)));
+  x.shadowBlur = 0;
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return { tex: t, w: m.w, h: m.h };
+}
+
+// ── Video: placeholder en eerste beeld ───────────────────────────────────
+const posterCache = new Map();
+function videoPlaceholder(it) {
+  const key = 'ph:' + (it.kind || 'file') + ':' + Math.round(it.w / it.h * 10);
+  if (posterCache.has(key)) return posterCache.get(key);
+  const c = document.createElement('canvas'); c.width = 640; c.height = Math.max(120, Math.round(640 * it.h / it.w));
+  const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, c.height);
+  g.addColorStop(0, '#2a2150'); g.addColorStop(1, '#130f26'); x.fillStyle = g; x.fillRect(0, 0, c.width, c.height);
+  const r = Math.min(c.width, c.height) * .16;
+  x.fillStyle = 'rgba(255,255,255,.92)'; x.beginPath(); x.arc(c.width / 2, c.height / 2, r, 0, 7); x.fill();
+  x.fillStyle = '#ff5eb8'; x.beginPath(); x.moveTo(c.width / 2 - r * .35, c.height / 2 - r * .5); x.lineTo(c.width / 2 + r * .55, c.height / 2); x.lineTo(c.width / 2 - r * .35, c.height / 2 + r * .5); x.fill();
+  x.fillStyle = 'rgba(255,255,255,.75)'; x.font = '600 26px Outfit, sans-serif'; x.textAlign = 'center';
+  x.fillText(it.kind === 'youtube' ? 'YouTube' : it.kind === 'link' ? 'Video via link' : 'Video', c.width / 2, c.height / 2 + r + 40);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  posterCache.set(key, t); return t;
+}
+// Eerste beeld van de video (of de YouTube-miniatuur) als textuur.
+function posterFor(vd, done) {
+  const it = vd.it;
+  if (!vd.src) return;
+  const key = 'p:' + (it.kind === 'youtube' ? it.src : hashStr(vd.src)) + ':' + (it.start || 0);
+  const hit = posterCache.get(key);
+  if (hit && hit.isTexture) { done(hit); return; }
+  if (hit === 'bezig' || hit === 'mislukt') return;
+  posterCache.set(key, 'bezig');
+  if (it.kind === 'youtube') {
+    const l = new THREE.TextureLoader(); l.setCrossOrigin('anonymous');
+    l.load('https://i.ytimg.com/vi/' + it.src + '/hqdefault.jpg', t => { t.colorSpace = THREE.SRGBColorSpace; posterCache.set(key, t); done(t); }, undefined, () => posterCache.set(key, 'mislukt'));
+    return;
+  }
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.preload = 'auto'; if (it.kind === 'link') v.crossOrigin = 'anonymous';
+  v.addEventListener('loadeddata', () => { try { v.currentTime = Math.max(.05, it.start || 0); } catch (e) {} }, { once: true });
+  v.addEventListener('seeked', () => {
+    try {
+      const c = document.createElement('canvas'); c.width = Math.min(960, v.videoWidth || 640); c.height = Math.round(c.width * (v.videoHeight || 360) / (v.videoWidth || 640));
+      const x = c.getContext('2d'); x.drawImage(v, 0, 0, c.width, c.height); x.getImageData(0, 0, 1, 1);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; posterCache.set(key, t); done(t);
+    } catch (e) { posterCache.set(key, 'mislukt'); }
+    v.removeAttribute('src'); try { v.load(); } catch (e) {}
+  }, { once: true });
+  v.addEventListener('error', () => posterCache.set(key, 'mislukt'), { once: true });
+  v.src = vd.src;
+}
+function youTubeUrl(it, origin) {
+  const p = new URLSearchParams({ enablejsapi: '1', playsinline: '1', rel: '0', modestbranding: '1', controls: '1' });
+  if (it.start) p.set('start', String(Math.floor(it.start)));
+  if (it.end) p.set('end', String(Math.floor(it.end)));
+  if (it.muted) p.set('mute', '1');
+  if (it.loop) { p.set('loop', '1'); p.set('playlist', it.src); }
+  if (origin && /^https?:/.test(origin)) p.set('origin', origin);
+  return 'https://www.youtube-nocookie.com/embed/' + it.src + '?' + p.toString();
+}
+// Homografie: element (w × h px) → vierhoek op het scherm, als CSS matrix3d.
+// q = [x0,y0, x1,y1, x2,y2, x3,y3] voor de hoeken linksboven, rechtsboven,
+// rechtsonder, linksonder.
+function quadMatrix(w, h, q) {
+  const [x0, y0, x1, y1, x2, y2, x3, y3] = q;
+  const sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3, dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2;
+  const det = dx1 * dy2 - dx2 * dy1 || 1e-9;
+  const g = (sx * dy2 - dx2 * sy) / det, hh = (dx1 * sy - sx * dy1) / det;
+  const a = x1 - x0 + g * x1, b = x3 - x0 + hh * x3, c = x0, d = y1 - y0 + g * y1, e = y3 - y0 + hh * y3, f = y0;
+  return 'matrix3d(' + [a / w, d / w, 0, g / w, b / h, e / h, 0, hh / h, 0, 0, 1, 0, c, f, 0, 1].join(',') + ')';
 }
 
 // ── Shaders ─────────────────────────────────────────────────────────────
@@ -1037,7 +1246,7 @@ class World {
     this.selected = -1;
     this.w = 0; this.h = 0;
   }
-  get theme() { return THEMES[this.doc?.settings.world] || THEMES.papier; }
+  get theme() { return themeOf(this.doc && this.doc.settings); }
   lineStyle() { const s = this.doc.settings.lineStyle; return s === 'auto' ? (this.theme.style || 'inkt') : s; }
   lineRadius() { return .008 * this.doc.settings.lineWidth; }
   setDoc(doc) { this.doc = normalizeDoc(doc); this.rebuild(); }
@@ -1073,8 +1282,9 @@ class World {
     const mat = style === 'klei' ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .42, metalness: .05 })
       : new THREE.MeshBasicMaterial({ vertexColors: true });
     mat.userData.shared = true; this.lineMat = mat;
-    this.haloMat = style === 'neon' ? haloMaterial() : null;
-    if (this.haloMat) { this.haloMat.uniforms.uGrow.value = radius * 3.2; this.haloMat.userData.shared = true; }
+    const glow = st.glow ?? 5;
+    this.haloMat = style === 'neon' && glow > 0 ? haloMaterial() : null;
+    if (this.haloMat) { this.haloMat.uniforms.uGrow.value = radius * (1.2 + glow * .45); this.haloMat.uniforms.uOpacity.value = .11 * glow; this.haloMat.userData.shared = true; }
     this.phases.forEach(ph => {
       const { geo, idxEnd } = buildTube(ph, radius);
       ph.idxEnd = idxEnd; ph.geo = geo;
@@ -1098,55 +1308,68 @@ class World {
   buildStation(slide, i) {
     const th = this.theme, S = this.stations[i], st = this.doc.settings, present = this.opts.mode === 'present';
     const g = new THREE.Group(); g.matrixAutoUpdate = false; g.matrix.copy(S.m); this.root.add(g);
-    const fx = { group: g, alpha: present ? 0 : 1, mats: [], texts: [] };
-    const minZ = (this.info[i] && this.info[i].minZ) || 0;
-    if (st.cards) {
-      const cz = Math.min(-.06, minZ - .12);
-      const card = new THREE.Mesh(new THREE.ShapeGeometry(roundRectShape(FW3 + .7, FH3 + .7, .35), 6), new THREE.MeshBasicMaterial({ color: slide.cardColor || th.card, side: THREE.DoubleSide, transparent: true, opacity: .97 }));
+    const fx = { group: g, items: [], videos: [], presence: present ? 0 : 1, textPresence: present ? 0 : 1 };
+    const minZ = (this.info[i] && this.info[i].minZ) || 0, cz = Math.min(-.06, minZ - .12);
+    const cardCol = slide.cardColor || th.card;
+    if (st.frame === 'kaart') {
+      const card = new THREE.Mesh(new THREE.ShapeGeometry(roundRectShape(FW3 + .7, FH3 + .7, .35), 6), new THREE.MeshBasicMaterial({ color: cardCol, side: THREE.DoubleSide, transparent: true, opacity: .97 }));
       card.position.z = cz; g.add(card); fx.card = card;
-      if (th.shadow) {
-        const sh = new THREE.Mesh(new THREE.PlaneGeometry(FW3 * 1.36, FH3 * 1.5), new THREE.MeshBasicMaterial({ map: this.texShadow, transparent: true, opacity: .2, depthWrite: false, color: 0x2a1a10 }));
-        sh.material.userData = { sharedMap: true }; sh.position.set(.25, -.35, cz - .25); g.add(sh);
-      }
-      if (th.edge) {
-        const pts = roundRectShape(FW3 + .7, FH3 + .7, .35).getPoints(10).map(p => new THREE.Vector3(p.x, p.y, cz + .01));
-        const ed = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: th.edge, transparent: true, opacity: .8 }));
-        g.add(ed);
-      }
+    }
+    if ((st.frame === 'kaart' && th.edge) || (st.frame === 'rand' && present)) {
+      const pts = roundRectShape(FW3 + .7, FH3 + .7, .35).getPoints(10).map(p => new THREE.Vector3(p.x, p.y, cz + .01));
+      const ed = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: th.edge || th.line, transparent: true, opacity: .8 }));
+      g.add(ed); fx.edge = ed; fx.edgeBase = st.frame === 'rand' ? .55 : .8;
     }
     // pick-vlak (onzichtbaar, voor klikken in editor en overzicht)
     const pick = new THREE.Mesh(new THREE.PlaneGeometry(FW3 + .7, FH3 + .7), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, transparent: true, opacity: 0, side: THREE.DoubleSide }));
     pick.userData.station = i; g.add(pick); fx.pick = pick;
+    const halo = st.frame === 'kaart' ? cardCol : th.mid;
     slide.items.forEach((it, ii) => {
+      const [lx, ly] = framePxToLocal(it.x + it.w / 2, it.y + it.h / 2);
       if (it.type === 'text') {
-        const t = textTexture(it, it.color || th.text);
-        const m = new THREE.MeshBasicMaterial({ map: t.tex, transparent: true, depthWrite: false, opacity: fx.alpha, side: THREE.DoubleSide });
+        const t = textTexture(it, it.color || th.text, halo);
+        const m = new THREE.MeshBasicMaterial({ map: t.tex, transparent: true, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
         const mesh = new THREE.Mesh(new THREE.PlaneGeometry(t.w * U, t.h * U), m);
-        const [lx, ly] = framePxToLocal(it.x + t.w / 2, it.y + t.h / 2);
-        mesh.position.set(lx, ly, .04 + ii * .002); mesh.rotation.z = -(it.rot || 0) * DEG; mesh.renderOrder = 3;
-        g.add(mesh); fx.mats.push({ m, base: 1 }); fx.texts.push({ ii, w: t.w, h: t.h });
-      } else if (it.type === 'image' && it.src) {
+        const [tx, ty] = framePxToLocal(it.x + t.w / 2, it.y + t.h / 2);
+        mesh.position.set(tx, ty, .05 + ii * .002); mesh.rotation.z = -(it.rot || 0) * DEG; mesh.renderOrder = 10;
+        g.add(mesh); fx.items.push({ kind: 'text', id: it.id, m, base: 1, alpha: present ? 0 : 1 });
+      } else if (it.type === 'image' && resolveSrc(this.doc, it.src)) {
         const m = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
-        new THREE.TextureLoader().load(it.src, tex => { tex.colorSpace = THREE.SRGBColorSpace; m.map = tex; m.needsUpdate = true; if (this.onAsync) this.onAsync(); }, undefined, () => {});
+        new THREE.TextureLoader().load(resolveSrc(this.doc, it.src), tex => { tex.colorSpace = THREE.SRGBColorSpace; m.map = tex; m.needsUpdate = true; if (this.onAsync) this.onAsync(); }, undefined, () => {});
         const mesh = new THREE.Mesh(new THREE.PlaneGeometry(it.w * U, it.h * U), m);
-        const [lx, ly] = framePxToLocal(it.x + it.w / 2, it.y + it.h / 2);
         mesh.position.set(lx, ly, .03 + ii * .002); mesh.rotation.z = -(it.rot || 0) * DEG; mesh.renderOrder = 3;
-        g.add(mesh); fx.mats.push({ m, base: it.opacity ?? 1 });
+        g.add(mesh); fx.items.push({ kind: 'media', id: it.id, m, base: it.opacity ?? 1, alpha: present ? 0 : 1 });
+      } else if (it.type === 'video') {
+        const m = new THREE.MeshBasicMaterial({ map: videoPlaceholder(it), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+        m.userData.sharedMap = true;
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(it.w * U, it.h * U), m);
+        mesh.position.set(lx, ly, .03 + ii * .002); mesh.rotation.z = -(it.rot || 0) * DEG; mesh.renderOrder = 3;
+        g.add(mesh); fx.items.push({ kind: 'media', id: it.id, m, base: 1, alpha: present ? 0 : 1 });
+        const vd = { it, mesh, m, station: i, src: it.kind === 'youtube' ? it.src : resolveSrc(this.doc, it.src) };
+        mesh.userData.video = vd;
+        fx.videos.push(vd);
+        posterFor(vd, tex => { if (!vd.playing) { m.map = tex; m.needsUpdate = true; if (this.onAsync) this.onAsync(); } });
       }
     });
     this.stationFx.push(fx);
-    this.setStationAlpha(i, fx.alpha);
+    this.applyStation(fx);
   }
-  setStationAlpha(i, a) {
-    const fx = this.stationFx[i]; if (!fx) return;
-    fx.alpha = a;
-    fx.mats.forEach(o => { o.m.opacity = a * o.base; o.m.visible = a > .002; });
+  setStationAlpha(i, a) { const fx = this.stationFx[i]; if (!fx) return; fx.items.forEach(o => { o.alpha = a; }); this.applyStation(fx); }
+  setItemAlpha(i, id, a) { const fx = this.stationFx[i]; if (!fx) return; const o = fx.items.find(x => x.id === id); if (o) o.alpha = a; }
+  // Aanwezigheid (0..1): hoe dicht de camera bij deze dia is. De kaart verschijnt
+  // pas als je aankomt; onderweg zie je alleen de lijnen.
+  setPresence(i, p, tp) { const fx = this.stationFx[i]; if (!fx) return; fx.presence = p; fx.textPresence = tp ?? p; this.applyStation(fx); }
+  applyStation(fx) {
+    const p = fx.presence ?? 1, tp = fx.textPresence ?? p;
+    fx.items.forEach(o => { const a = o.alpha * (o.kind === 'text' ? tp : p) * o.base; o.m.opacity = a; o.m.visible = a > .002; });
+    if (fx.card) { fx.card.material.opacity = .97 * p; fx.card.visible = p > .003; const s = .95 + .05 * p; fx.card.scale.set(s, s, 1); }
+    if (fx.edge) { fx.edge.material.opacity = (fx.edgeBase || .8) * p; fx.edge.visible = p > .003; }
   }
   buildEnvironment() {
     const th = this.theme, c = this.sceneCenter, R = this.sceneRadius;
     const rnd = mulberry(7);
     // stofjes / sterretjes voor diepte
-    const n = th.stars ? 1400 : 900, pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    const n = th.dustOp > 0 ? (th.stars ? 1400 : 900) : 0, pos = new Float32Array(Math.max(1, n) * 3), col = new Float32Array(Math.max(1, n) * 3);
     const cc = new THREE.Color(th.dust), alt = [new THREE.Color('#ff5eb8'), new THREE.Color('#68e3d6'), new THREE.Color('#fff38c')];
     for (let k = 0; k < n; k++) {
       const r = R * (.4 + 1.6 * Math.cbrt(rnd())), a = rnd() * Math.PI * 2, b = Math.acos(2 * rnd() - 1);
@@ -1328,6 +1551,9 @@ const PLAYER_CSS = `
 .olp-help.show{display:grid}
 .olp-help div{background:rgba(255,255,255,.95);color:#2a1458;border-radius:18px;padding:22px 28px;font-size:14px;line-height:1.75;min-width:300px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .olp-help b{display:inline-block;min-width:110px;color:#ff5eb8}
+.olp-media{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.olp-media-el{position:absolute;left:0;top:0;transform-origin:0 0;border:0;background:#000;pointer-events:auto;opacity:0}
+.olp-media video.olp-media-el{object-fit:contain;cursor:pointer}
 `;
 let cssInjected = false;
 function injectPlayerCSS() { if (cssInjected) return; cssInjected = true; const s = document.createElement('style'); s.textContent = PLAYER_CSS; document.head.appendChild(s); }
@@ -1343,7 +1569,7 @@ class Player {
     this.hintEl = document.createElement('div'); this.hintEl.className = 'olp-hint'; this.el.appendChild(this.hintEl);
     this.jumpEl = document.createElement('div'); this.jumpEl.className = 'olp-jump'; this.el.appendChild(this.jumpEl);
     this.helpEl = document.createElement('div'); this.helpEl.className = 'olp-help';
-    this.helpEl.innerHTML = `<div><b>→ spatie klik</b> volgende<br><b>←</b> vorige (lijn tekent opnieuw)<br><b>O</b> overzicht van de hele lijn<br><b>slepen</b> om de tekening heen kijken<br><b>3 Enter</b> naar dia 3<br><b>Home / End</b> eerste / laatste<br><b>A</b> 3D-bril (rood/cyaan)<br><b>M</b> geluid aan/uit<br><b>B / W</b> zwart / wit scherm<br><b>F</b> volledig scherm<br><b>Esc</b> stoppen</div>`;
+    this.helpEl.innerHTML = `<div><b>→ spatie klik</b> volgende<br><b>←</b> vorige (lijn tekent opnieuw)<br><b>O</b> overzicht van de hele lijn<br><b>slepen</b> om de tekening heen kijken<br><b>3 Enter</b> naar dia 3<br><b>Home / End</b> eerste / laatste<br><b>A</b> 3D-bril (rood/cyaan)<br><b>M</b> geluid aan/uit<br><b>K</b> video afspelen / pauzeren<br><b>B / W</b> zwart / wit scherm<br><b>F</b> volledig scherm<br><b>Esc</b> stoppen</div>`;
     this.el.appendChild(this.helpEl);
     this.bar = document.createElement('div'); this.bar.className = 'olp-bar';
     const btn = (txt, title, fn) => { const b = document.createElement('button'); b.textContent = txt; b.title = title; b.addEventListener('click', e => { e.stopPropagation(); fn(); this.wake(); }); this.bar.appendChild(b); return b; };
@@ -1371,7 +1597,7 @@ class Player {
   mount(parent) {
     (parent || document.body).appendChild(this.el);
     if (this.opts.record) this.el.classList.add('rec');
-    this.onResize(); this.bind();
+    this.onResize(); this.bind(); this.setupMedia();
     const startAt = clamp(this.opts.startAt | 0, 0, Math.max(0, this.N - 1));
     if (!this.N) { this.hint('Deze presentatie heeft nog geen dia’s', 3000); }
     else if (startAt > 0) {
@@ -1418,7 +1644,7 @@ class Player {
     on(document, 'keydown', e => this.onKey(e), true);
     on(this.el, 'mousemove', e => { this.mouse.x = e.clientX / innerWidth * 2 - 1; this.mouse.y = e.clientY / innerHeight * 2 - 1; this.wake(); });
     let down = null;
-    on(this.el, 'pointerdown', e => { if (e.target.closest('.olp-bar')) return; down = { x: e.clientX, y: e.clientY, yaw: this.user.yaw, pitch: this.user.pitch, moved: false, t: performance.now() }; this.dragging = false; });
+    on(this.el, 'pointerdown', e => { if (e.target.closest('.olp-bar,.olp-media-el')) return; down = { x: e.clientX, y: e.clientY, yaw: this.user.yaw, pitch: this.user.pitch, moved: false, t: performance.now() }; this.dragging = false; });
     on(window, 'pointermove', e => {
       if (!down) return;
       const dx = e.clientX - down.x, dy = e.clientY - down.y;
@@ -1436,6 +1662,8 @@ class Player {
         return;
       }
       if (this.state === 'overview') { const i = this.pickAt(e.clientX, e.clientY); if (i >= 0) this.goTo(i); else this.toggleOverview(); return; }
+      const vh = this.videoAt(e.clientX, e.clientY);
+      if (vh) { this.toggleVideo(vh); return; }
       if (e.button === 0) this.next();
     });
     on(this.el, 'wheel', e => { e.preventDefault(); this.user.zoom = clamp(this.user.zoom * (e.deltaY > 0 ? 1.08 : 1 / 1.08), .35, 3); }, { passive: false });
@@ -1477,6 +1705,7 @@ class Player {
     else if (k === 'o' || k === 'O') this.toggleOverview();
     else if (k === 'a' || k === 'A') this.toggleAnaglyph();
     else if (k === 'm' || k === 'M') this.toggleSound();
+    else if (k === 'k' || k === 'K') this.toggleMedia();
     else if (k === 'b' || k === 'B') this.blank('#000');
     else if (k === 'w' || k === 'W') this.blank('#fff');
     else if (k === 'f' || k === 'F' || k === 'F11') this.toggleFullscreen();
@@ -1523,8 +1752,10 @@ class Player {
   }
   // ── tijdlijn ──
   phaseOf(i, kind) { const inf = this.world.info[i]; if (!inf) return null; const k = kind === 'draw' ? inf.draw : inf.travel; return k >= 0 ? this.world.phases[k] : null; }
-  drawDuration(ph) { const v = 4 * Math.pow(1.3, this.doc.settings.drawSpeed - 1); return clamp(ph.len / v, 1.2, 18); }
-  travelDuration(ph) { const v = 6 * Math.pow(1.3, this.doc.settings.travelSpeed - 1); return clamp(ph.len / v, 1.3, 6); }
+  // Eén pen, één tempo: vliegen gaat met dezelfde pen als tekenen, alleen iets vlotter.
+  penSpeed() { return 4 * Math.pow(1.3, this.doc.settings.drawSpeed - 1); }
+  drawDuration(ph) { return clamp(ph.len / this.penSpeed(), 1.2, 18); }
+  travelDuration(ph) { const k = 1.6 * Math.pow(1.15, this.doc.settings.travelSpeed - 5); return clamp(ph.len / (this.penSpeed() * k), 1.2, 7); }
   startDraw(i) {
     const ph = this.phaseOf(i, 'draw'); if (!ph) return;
     this.cur = i; this.counter();
@@ -1547,6 +1778,10 @@ class Player {
     if (this.state === 'travel' || this.state === 'seek') { this.anim.t = this.anim.dur; return; }
     if (this.state === 'overview') { this.toggleOverview(); return; }
     if (this.state === 'idle') {
+      // staat er een video op de dia: eerst die starten
+      const pend = this.pendingMedia(this.cur);
+      if (pend.length) { pend.forEach(v => this.playVideo(v)); this.hint('Video speelt — nog een keer verder = volgende dia', 2200); return; }
+      this.pauseAll();
       if (this.cur < this.N - 1) this.startTravel(this.cur);
       else this.startFinale();
       return;
@@ -1565,6 +1800,7 @@ class Player {
   }
   goTo(i) {
     if (!this.N) return;
+    this.pauseAll();
     i = clamp(i, 0, this.N - 1);
     const ph = this.phaseOf(i, 'draw');
     this.overviewOn = false; this.btnOverview.classList.remove('on');
@@ -1624,7 +1860,7 @@ class Player {
         desired = this.drawCamPose(a.i, u);
         if (a.t >= a.dur) { this.s = a.s1; this.anim = null; this.state = 'idle'; this.idleT = 0; }
       } else if (a.kind === 'travel' || a.kind === 'intro') {
-        const e = easeSine(u);
+        const e = travelEase(u);
         this.s = lerp(a.s0, a.s1, e); penMode = 'travel';
         desired = this.travelPose(a, u);
         if (a.t >= a.dur) { this.s = a.s1; this.startDraw(a.to); }
@@ -1659,7 +1895,7 @@ class Player {
     }
     // gebruiker kijkt even om de tekening heen; daarna veert het terug
     if (!this.dragging && this.state !== 'overview') { this.user.yaw *= Math.exp(-dt * 1.6); this.user.pitch *= Math.exp(-dt * 1.6); }
-    this.dampCam(desired, dt, this.state === 'travel' || this.state === 'intro' ? 5.5 : this.state === 'seek' ? 9 : 3.2);
+    this.dampCam(desired, dt, this.state === 'travel' || this.state === 'intro' ? 3.6 : this.state === 'seek' ? 9 : 3.2);
     w.setProgress(this.s);
     // pen
     const moving = Math.abs(this.s - sPrev) / Math.max(dt, 1e-4);
@@ -1686,18 +1922,41 @@ class Player {
     this.ghostA = lerp(this.ghostA || 0, ghostTarget, 1 - Math.exp(-dt * 3));
     w.phases.forEach(ph => { if (ph.ghost) { ph.ghost.material.opacity = this.ghostA; ph.ghost.visible = this.ghostA > .005; } });
     this.syncTexts(false, dt);
+    this.updatePresence(dt);
+    this.updateMedia();
     // wereldtint per dia
     this.updateTint(dt);
     this.sound.update(penMode === 'idle' ? 'idle' : penMode, moving);
   }
+  // Teksten verschijnen als de dia af is; een afbeelding of video zodra de
+  // pen zijn kader heeft getekend.
   syncTexts(instant, dt) {
-    const w = this.world;
+    const w = this.world, fin = 1 - Math.exp(-(dt || 0) * 2.6), fout = 1 - Math.exp(-(dt || 0) * 8);
     w.info.forEach((inf, i) => {
-      const ph = w.phases[inf.draw];
-      const target = this.s >= ph.s1 - 1e-4 ? 1 : 0;
       const fx = w.stationFx[i]; if (!fx) return;
-      const a = instant ? target : lerp(fx.alpha, target, 1 - Math.exp(-(dt || 0) * (target ? 2.6 : 8)));
-      w.setStationAlpha(i, Math.abs(a - target) < .003 ? target : a);
+      const done = this.s >= w.phases[inf.draw].s1 - 1e-4;
+      fx.items.forEach(o => {
+        const rs = o.kind === 'media' && inf.reveal && inf.reveal[o.id] != null ? inf.reveal[o.id] : null;
+        const target = rs != null ? (this.s >= rs - 1e-4 ? 1 : 0) : (done ? 1 : 0);
+        o.alpha = instant || Math.abs(o.alpha - target) < .003 ? target : lerp(o.alpha, target, target ? fin : fout);
+      });
+      w.applyStation(fx);
+    });
+  }
+  updatePresence(dt) {
+    const w = this.world, cam = this.camera(), fwd = cam.getWorldDirection(new THREE.Vector3()), to = new THREE.Vector3();
+    const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+    w.stations.forEach((S, i) => {
+      const fx = w.stationFx[i]; if (!fx) return;
+      const Dd = w.fitDist(cam.aspect) * S.scale * (this.doc.slides[i].camZoom || 1);
+      to.copy(S.center).sub(cam.position);
+      const dist = to.length(); to.normalize();
+      const front = to.clone().negate().dot(S.normal);
+      const p = sm(2.1, 1.3, dist / Dd) * sm(.8, .96, fwd.dot(to)) * sm(.15, .45, front);
+      const cur = fx.presence ?? 0, k = 1 - Math.exp(-dt * 5);
+      // de tekst van de laatste dia blijft in beeld tijdens het slotshot
+      const tpT = (this.state === 'outro' || this.state === 'end') && i === this.N - 1 ? 1 : p, tpc = fx.textPresence ?? 0;
+      w.setPresence(i, Math.abs(p - cur) < .002 ? p : lerp(cur, p, k), Math.abs(tpT - tpc) < .002 ? tpT : lerp(tpc, tpT, k));
     });
   }
   updateTint(dt) {
@@ -1715,12 +1974,12 @@ class Player {
     let yaw = this.user.yaw, pitch = this.user.pitch;
     const t = this.time;
     if (sl.motion === 'zweven') { yaw += Math.sin(t * .23) * 4; pitch += Math.sin(t * .17) * 2.2; }
-    else if (sl.motion === 'rondje') { yaw += Math.sin(t * .28) * 34; pitch += Math.sin(t * .19) * 9; }
+    else if (sl.motion === 'rondje') { yaw += Math.sin(t * .28) * 24; pitch += Math.sin(t * .19) * 7; }
     let zoom = this.user.zoom, offset = null;
     if (this.state === 'drawing' && st.drawCam !== 'rustig' && this.pen) {
       const S = w.stations[i];
       const rel = this.pen.clone().sub(S.center);
-      if (st.drawCam === 'meekijken') { offset = rel.multiplyScalar(.28); }
+      if (st.drawCam === 'meekijken') { offset = rel.multiplyScalar(.16); }
       else if (st.drawCam === 'inzoomen') { const f = 1 - smooth(clamp(u / .75, 0, 1)); offset = rel.multiplyScalar(.85 * f); zoom *= lerp(1, .42, f); }
     }
     return w.stationPose(i, { yaw, pitch, zoom, offset });
@@ -1737,10 +1996,10 @@ class Player {
     w.penAt(this.s, p); w.penAt(this.s + 2.2, q); w.penAt(Math.max(a.s0, this.s - 2.2), r);
     const tan = q.clone().sub(r); if (tan.lengthSq() < 1e-6) tan.copy(to.target).sub(a.from.target);
     tan.normalize();
-    const back = clamp(w.fitDist(w.camera.aspect) * .5, 4, 12);
+    const back = clamp(w.fitDist(w.camera.aspect) * .85, 6, 16);
     const up = base.up.clone();
-    const chase = { pos: p.clone().addScaledVector(tan, -back).addScaledVector(up, back * .38), target: p.clone().addScaledVector(tan, back * .6), up };
-    const wgt = Math.pow(Math.sin(Math.PI * clamp((u - .05) / .9, 0, 1)), .7) * .85;
+    const chase = { pos: p.clone().addScaledVector(tan, -back).addScaledVector(up, back * .3), target: p.clone().addScaledVector(tan, back * .45), up };
+    const wgt = Math.pow(Math.sin(Math.PI * clamp((u - .05) / .9, 0, 1)), .8) * .5;
     return this.lerpPose(base, chase, wgt);
   }
   lerpPose(A, B, t) { return { pos: A.pos.clone().lerp(B.pos, t), target: A.target.clone().lerp(B.target, t), up: A.up.clone().lerp(B.up, t).normalize() }; }
@@ -1760,13 +2019,14 @@ class Player {
     c.up.lerp(p.up, f).normalize(); c.lookAt(this.camTarget);
   }
   emitSparks(dt, speed) {
-    const n = Math.min(6, Math.ceil(dt * clamp(speed * 4, 20, 140)));
+    this.sparkAcc = (this.sparkAcc || 0) + Math.min(speed, 40) * dt * 1.4;
+    const n = Math.min(3, Math.floor(this.sparkAcc)); this.sparkAcc -= n;
     for (let k = 0; k < n; k++) {
       const i = this.sparkI = (this.sparkI + 1) % this.sparkN;
       this.spPos[i * 3] = this.pen.x; this.spPos[i * 3 + 1] = this.pen.y; this.spPos[i * 3 + 2] = this.pen.z;
-      const r = this.world.lineRadius() * 30;
+      const r = this.world.lineRadius() * 16;
       this.spVel[i * 3] = (Math.random() - .5) * r; this.spVel[i * 3 + 1] = (Math.random() - .3) * r; this.spVel[i * 3 + 2] = (Math.random() - .5) * r;
-      this.spLife[i] = 1; this.spSize[i] = this.world.lineRadius() * (5 + Math.random() * 9);
+      this.spLife[i] = 1; this.spSize[i] = this.world.lineRadius() * (3 + Math.random() * 5);
       const c = this.penCol.clone().lerp(new THREE.Color(1, 1, 1), Math.random() * .6);
       this.spCol[i * 3] = c.r; this.spCol[i * 3 + 1] = c.g; this.spCol[i * 3 + 2] = c.b;
     }
@@ -1774,7 +2034,7 @@ class Player {
   updateSparks(dt) {
     for (let i = 0; i < this.sparkN; i++) {
       if (this.spLife[i] <= 0) continue;
-      this.spLife[i] = Math.max(0, this.spLife[i] - dt * 1.3);
+      this.spLife[i] = Math.max(0, this.spLife[i] - dt * 1.9);
       this.spPos[i * 3] += this.spVel[i * 3] * dt; this.spPos[i * 3 + 1] += this.spVel[i * 3 + 1] * dt; this.spPos[i * 3 + 2] += this.spVel[i * 3 + 2] * dt;
       this.spVel[i * 3 + 1] -= dt * .15;
     }
@@ -1793,6 +2053,116 @@ class Player {
     });
     w.renderer.setRenderTarget(null); w.renderer.render(this.anaScene, this.anaCam);
   }
+  // ── video's ──
+  setupMedia() {
+    this.mediaLayer = document.createElement('div'); this.mediaLayer.className = 'olp-media';
+    this.canvas.after(this.mediaLayer);
+    this.videos = [];
+    this.world.stationFx.forEach(fx => fx.videos.forEach(vd => this.videos.push(vd)));
+  }
+  pendingMedia(i) {
+    const fx = this.world.stationFx[i]; if (!fx) return [];
+    return fx.videos.filter(vd => !vd.started && vd.src && this.itemAlpha(i, vd.it.id) > .5);
+  }
+  itemAlpha(i, id) { const fx = this.world.stationFx[i], o = fx && fx.items.find(x => x.id === id); return o ? o.alpha : 0; }
+  // Maakt het afspeel-element: een <video> als textuur in de 3D-scène, of (YouTube,
+  // links zonder toestemming) een element dat over de dia wordt gelegd.
+  ensureVideo(vd) {
+    if (vd.el || !vd.src) return;
+    const it = vd.it;
+    if (it.kind === 'youtube') {
+      const f = document.createElement('iframe'); f.className = 'olp-media-el';
+      f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; f.setAttribute('allowfullscreen', '');
+      f.width = 960; f.height = Math.round(960 * it.h / it.w); f.style.width = '960px'; f.style.height = f.height + 'px';
+      const u = youTubeUrl(it, location.origin) + '&autoplay=1';
+      f.src = u; vd.el = f; vd.overlay = true; this.mediaLayer.appendChild(f);
+      return;
+    }
+    const v = document.createElement('video');
+    v.playsInline = true; v.preload = 'auto'; v.muted = !!it.muted;
+    if (it.kind === 'link') v.crossOrigin = 'anonymous';
+    v.addEventListener('timeupdate', () => {
+      if (it.end && v.currentTime >= it.end) { if (it.loop) v.currentTime = it.start || 0; else v.pause(); }
+    });
+    v.addEventListener('ended', () => { if (it.loop) { v.currentTime = it.start || 0; v.play().catch(() => {}); } });
+    v.addEventListener('error', () => {
+      // link zonder CORS: dan als los element over de dia afspelen
+      if (it.kind === 'link' && v.crossOrigin && !vd.retried) {
+        vd.retried = true; v.removeAttribute('crossorigin'); v.crossOrigin = null;
+        vd.overlay = true; v.className = 'olp-media-el'; v.style.width = '960px'; v.style.height = Math.round(960 * it.h / it.w) + 'px';
+        v.addEventListener('click', e => { e.stopPropagation(); this.toggleVideo(vd); });
+        this.mediaLayer.appendChild(v); v.src = vd.src; if (vd.wantPlay) v.play().catch(() => {});
+      }
+    });
+    v.src = vd.src;
+    vd.el = v;
+    if (!vd.overlay) {
+      const tex = new THREE.VideoTexture(v); tex.colorSpace = THREE.SRGBColorSpace;
+      vd.tex = tex;
+    }
+  }
+  playVideo(vd) {
+    this.ensureVideo(vd); if (!vd.el) return;
+    vd.started = true; vd.playing = true; vd.wantPlay = true;
+    if (vd.it.kind === 'youtube') { if (vd.loadedOnce) this.ytCommand(vd, 'playVideo'); vd.loadedOnce = true; return; }
+    const v = vd.el;
+    if (vd.tex && !vd.overlay) { vd.m.map = vd.tex; vd.m.needsUpdate = true; }
+    const st = vd.it.start || 0;
+    if (v.currentTime < st || (vd.it.end && v.currentTime >= vd.it.end)) { try { v.currentTime = st; } catch (e) {} }
+    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+  }
+  pauseVideo(vd) {
+    vd.playing = false; vd.wantPlay = false;
+    if (!vd.el) return;
+    if (vd.it.kind === 'youtube') this.ytCommand(vd, 'pauseVideo'); else vd.el.pause();
+  }
+  toggleVideo(vd) { if (vd.playing) this.pauseVideo(vd); else this.playVideo(vd); }
+  ytCommand(vd, func) { try { vd.el.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: '' }), '*'); } catch (e) {} }
+  pauseAll() { (this.videos || []).forEach(vd => { if (vd.playing) this.pauseVideo(vd); vd.started = false; }); }
+  toggleMedia() {
+    const fx = this.world.stationFx[this.cur]; if (!fx) return;
+    const vis = fx.videos.filter(vd => this.itemAlpha(this.cur, vd.it.id) > .5);
+    const anyPlaying = vis.some(vd => vd.playing);
+    vis.forEach(vd => anyPlaying ? this.pauseVideo(vd) : this.playVideo(vd));
+  }
+  videoAt(x, y) {
+    const fx = this.world.stationFx[this.cur]; if (!fx || !fx.videos.length) return null;
+    const r = this.canvas.getBoundingClientRect(), rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2((x - r.left) / r.width * 2 - 1, -((y - r.top) / r.height) * 2 + 1), this.camera());
+    const hits = rc.intersectObjects(fx.videos.filter(vd => this.itemAlpha(this.cur, vd.it.id) > .5).map(vd => vd.mesh), false);
+    return hits.length ? hits[0].object.userData.video : null;
+  }
+  updateMedia() {
+    if (!this.videos || !this.videos.length) return;
+    const w = this.world, cam = this.camera(), r = this.canvas.getBoundingClientRect(), er = this.el.getBoundingClientRect();
+    this.videos.forEach(vd => {
+      const fx = w.stationFx[vd.station];
+      const a = this.itemAlpha(vd.station, vd.it.id) * (fx.presence ?? 0);
+      // automatisch starten zodra het kader af is en je bij de dia bent
+      if (vd.it.autoplay && !vd.started && vd.station === this.cur && a > .6 && (this.state === 'idle' || this.state === 'drawing')) this.playVideo(vd);
+      if (vd.playing && vd.station !== this.cur && this.state !== 'overview') this.pauseVideo(vd);
+      if (!vd.overlay || !vd.el) return;
+      const el = vd.el, it = vd.it;
+      if (a < .02) { el.style.opacity = '0'; el.style.visibility = 'hidden'; return; }
+      const S = w.stations[vd.station], rot = (it.rot || 0) * DEG, cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+      const q = [];
+      for (const [px, py] of [[it.x, it.y], [it.x + it.w, it.y], [it.x + it.w, it.y + it.h], [it.x, it.y + it.h]]) {
+        const dx = px - cx, dy = py - cy, rx = cx + dx * Math.cos(rot) - dy * Math.sin(rot), ry = cy + dx * Math.sin(rot) + dy * Math.cos(rot);
+        const [lx, ly] = framePxToLocal(rx, ry);
+        const v = new THREE.Vector3(lx, ly, .04).applyMatrix4(S.m).project(cam);
+        if (v.z > 1 || v.z < -1) { el.style.visibility = 'hidden'; return; }
+        q.push(r.left - er.left + (v.x + 1) / 2 * r.width, r.top - er.top + (1 - v.y) / 2 * r.height);
+      }
+      const W = parseFloat(el.style.width) || 960, H = parseFloat(el.style.height) || 540;
+      el.style.transform = quadMatrix(W, H, q);
+      el.style.visibility = 'visible'; el.style.opacity = String(a);
+    });
+  }
+  disposeMedia() {
+    (this.videos || []).forEach(vd => { if (vd.el) { try { vd.el.pause && vd.el.pause(); } catch (e) {} vd.el.remove(); } if (vd.tex) vd.tex.dispose(); });
+    if (this.mediaLayer) this.mediaLayer.remove();
+  }
+
   // ── opnemen als video ──
   startRecording() {
     const types = ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
@@ -1818,6 +2188,7 @@ class Player {
     clearTimeout(this.wakeT); clearTimeout(this.hintT);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.sound.stop();
+    this.disposeMedia();
     this.world.dispose();
     this.el.remove();
     if (this.opts.onExit) this.opts.onExit();
@@ -1848,6 +2219,6 @@ G.OLP3D = {
   THREE, FW, FH, U, FOV, THEMES, LINE_STYLES, FONTS, FONT_FILES, SHAPES, SHAPE_DEFORMS, LINKS, MOTIONS, DEFAULT_SETTINGS,
   normalizeDoc, normalizeSlide, normalizeItem, newId, safeColor, sanitizeSvgText, readSvg, parsePathD,
   loadOneLineFont, composeOneLineText, oneLineMissing, shapePreviewPath, measureTextItem, fontsUsed, loadFonts,
-  World, Player, startStandalone, clamp, lerp, mulberry, hashStr
+  World, Player, startStandalone, resolveSrc, VIDEO_KINDS, FRAMES, YT_ID_RE, themeOf, clamp, lerp, mulberry, hashStr
 };
 })(window);

@@ -11,7 +11,7 @@
 ╚══════════════════════════════════════════════════════════╝
 ```
 
-![Version](https://img.shields.io/badge/VERSION-1.0.0-FF5EB8?style=for-the-badge&labelColor=2A1458)
+![Version](https://img.shields.io/badge/VERSION-1.1.0-FF5EB8?style=for-the-badge&labelColor=2A1458)
 ![3D](https://img.shields.io/badge/THREE.JS-r180-68E3D6?style=for-the-badge&labelColor=2A1458)
 ![Electron](https://img.shields.io/badge/ELECTRON-40-FFF38C?style=for-the-badge&labelColor=2A1458)
 ![Broer](https://img.shields.io/badge/BROER%20VAN-ONE%20LINE%20PREZI-C9B0F7?style=for-the-badge&labelColor=2A1458)
@@ -40,9 +40,11 @@ gewoon openen: ze worden automatisch omgezet naar 3D.
 │                                                         │
 │  ✧  Camera vliegt in 3D van en naar elke tekening       │
 │  ✧  De lijn is een echte 3D-lijn (buis) door de ruimte  │
-│  ✧  Tekeningen uit de bibliotheek + eigen SVG's         │
+│  ✧  Bibliotheek als echte 3D-lijntekeningen             │
+│  ✧  Eigen SVG's (plat, gebogen of als reliëf)           │
 │  ✧  Tekst als lijn (one-line-font) — ook in 3D          │
-│  ✧  Gewone tekst en afbeeldingen op de dia's            │
+│  ✧  Tekst, afbeeldingen en video's (bestand, link,      │
+│       YouTube) — de lijn tekent eerst een kader         │
 │  ✧  2D One Line Prezi-presentaties openen (omzetten)    │
 │  ✧  Export als één los HTML-bestand                     │
 │  ✧  Opnemen als video (MP4/WebM, 1920 × 1080)           │
@@ -54,12 +56,15 @@ gewoon openen: ze worden automatisch omgezet naar 3D.
 
 | | |
 |:---|:---|
+| **3D-bibliotheek** | De tekeningen uit One Line Prezi als echte 3D-lijntekeningen: kompas, zandloper, wegwijzer, anker, appel, boek(en), boom met vallend blad, weegschaal, Rubik's kubus, lego, taart, steeksleutel, vraagteken, diamant en diagrammen. Mensen en handen krijgen automatisch een 3D-reliëf. Shift+klik in de bibliotheek = het platte 2D-origineel. |
+| **Dia's die pas verschijnen bij aankomst** | Onderweg zie je alleen de lijn; de kaart van een dia verschijnt zacht als de camera aankomt. Het kader kan ook *alleen een rand* of *onzichtbaar* zijn. |
+| **Video en afbeelding** | De pen tekent eerst een kader, daarna verschijnt de afbeelding of start de video. Video als bestand, via een link (Dropbox, OneDrive, Google Drive…) of YouTube, met automatisch starten, geluid, herhalen en begin/eind. |
 | **3D-vormen uit één lijn** | Bol, hart, knoop, veer, DNA, kubus (Hilbert-kromme), Lissajous, wervelwind, zandloper en heuvels — wiskundig allemaal één doorlopende lijn. |
 | **Tekeningen buigen** | Leg een 2D-tekening bol, laat hem golven, vouw hem om een cilinder, draai hem of zet elk pad op een eigen diepte (lagen). |
 | **Lijnreizen** | De lijn tussen twee dia's kan vloeiend gaan, een looping maken, als kurkentrekker draaien, golven of recht gaan. |
 | **Camera-regie** | *Achter de pen aan* (drone-shot), *Zweefvlucht* (Prezi-achtig uit- en inzoomen) of *Rechtstreeks*. Tijdens het tekenen: rustig, meekijken of inzoomen (begint dicht op de pen en zoomt uit). |
-| **Werelden** | Papier, Nacht (neon met sterren), Y2K pastel (met rasterbodem), Mist, Blauwdruk en Zonsondergang. Per dia kan de lucht van kleur verschieten (*sfeer*). |
-| **Lijnstijlen** | Inkt (plat, zoals op papier), Neon (gloeiend) en Klei (3D met licht en schaduw). |
+| **Werelden** | 15 werelden: Papier, Nacht, Ruimte (zonder sterren), Synthwave, Noorderlicht, Oceaan, Y2K pastel, Suikerspin, Bos, Woestijn, Krijtbord, Mist, Blauwdruk, Zonsondergang en Zwart-wit. Met *Wereld aanpassen* kies je zelf de luchtkleuren, kaart-, lijn- en tekstkleur, sterren, stofjes, rasterbodem en mist. Per dia kan de lucht van kleur verschieten (*sfeer*). |
+| **Lijnstijlen** | Inkt (plat, zoals op papier), Neon (gloeiend, met een schuif voor de sterkte van de gloed) en Klei (3D met licht en schaduw). Tekenen en vliegen gaan met dezelfde pen in één rustig tempo. |
 | **Indelingen** | Zet alle dia's in één klik als rij, wenteltrap, carrousel, golf, tunnel of sterrenstelsel. |
 | **Opening & slot** | De lijn komt van ver aanvliegen; aan het eind vliegt hij de ruimte in en draait de camera om het hele kunstwerk. |
 | **Spookspoor** | De rest van de lijn is vaag zichtbaar, zodat je publiek al ziet waar de reis heen gaat. |
@@ -134,6 +139,8 @@ De editor heeft twee weergaven (wissel met **Tab**):
 | `slepen` / `scrollen` | Om de tekening heen kijken / zoomen |
 | `A` | 3D-bril (rood/cyaan) |
 | `M` | Geluid aan/uit |
+| `K` / klik op de video | Video afspelen / pauzeren |
+| `→` op een dia met video | Eerst de video starten, daarna volgende dia |
 | `B` / `W` | Zwart / wit scherm |
 | `F` | Volledig scherm |
 | `?` | Sneltoetsen |
@@ -164,7 +171,7 @@ De editor heeft twee weergaven (wissel met **Tab**):
 - **Opslaan** schrijft een `.json` met alles erin (ook tekeningen en afbeeldingen).
 - **2D importeren**: open een presentatie uit One Line Prezi. Tekeningen,
   kleuren, tekst als pad, tekstblokken, ondertitels en afbeeldingen komen mee;
-  de dia's worden in een golf door de ruimte gezet. (Video's en YouTube nog niet.)
+  ook video's en YouTube; de dia's worden in een golf door de ruimte gezet.
 - **Exporteren als HTML**: één bestand waarin Three.js, de 3D-motor, de
   lettertypen en de presentatie zitten. Dubbelklikken = presenteren, ook offline.
 - **Opnemen als video**: de presentatie speelt zichzelf af in 1920 × 1080 en
@@ -187,6 +194,7 @@ De editor heeft twee weergaven (wissel met **Tab**):
 |:---|:---|
 | `index.html` | De editor (opmaak en stijl) |
 | `assets/js/engine.js` | De 3D-motor: SVG lezen, lijn als buis, 3D-vormen, camera, presentatie. Wordt ook in de HTML-export gezet. |
+| `assets/js/models3d.js` | De 3D-lijntekeningen van de bibliotheek |
 | `assets/js/editor.js` | De editor: dia's, elementen, panelen, bestanden, export, video |
 | `assets/svglibrary.js`, `assets/onelinefont.js` | Bibliotheek en one-line-font, overgenomen uit One Line Prezi |
 | `assets/vendor/three.min.js` | Three.js als los script (`npm run build:three` maakt hem opnieuw) |
