@@ -1,0 +1,42 @@
+{
+  "name": "3d-one-line-prezi",
+  "version": "1.1.0",
+  "description": "3D One Line Prezi — één doorlopende lijn reist door de ruimte van tekening naar tekening",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node tools/serve.js",
+    "build": "electron-builder",
+    "build:three": "node tools/build-three.js"
+  },
+  "author": "Baalderborg Groep",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1",
+    "esbuild": "0.25.10",
+    "three": "0.180.0"
+  },
+  "build": {
+    "appId": "nl.baalderborggroep.onelineprezi3d",
+    "productName": "3D One Line Prezi",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "index.html",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "3D One Line Prezi"
+    }
+  }
+}
