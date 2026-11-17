@@ -125,7 +125,7 @@ function normalizeItem(it) {
     b.tiltX = numOr(it.tiltX, 18); b.tiltY = numOr(it.tiltY, -24);
   } else if (type === 'model') {
     const M = G.OLP3D_MODELS && G.OLP3D_MODELS.MODELS;
-    b.model = strOr(it.model, 'kompas'); if (M && !M[b.model]) b.model = 'kompas';
+    b.model = strOr(it.model, 'kompas'); if (M && !M[b.model]) return null; // vervallen model
     const tl = (M && M[b.model] && M[b.model].tilt) || [12, -26];
     b.name = strOr(it.name, '');
     b.color = it.color ? safeColor(it.color, '') : '';
@@ -439,7 +439,10 @@ function resample(pts, spacing) {
 // ── One-line-font (handschrift uit één lijn) ────────────────────────────
 const oneLineFont = {};
 const ONE_LINE_PUNCTUATION = { punt: '.', komma: ',', uitroepteken: '!', vraagteken: '?', streepje: '-', dubbelepunt: ':', puntkomma: ';', apostrof: "'", aanhalingsteken: '"', 'haakje-openen': '(', 'haakje-sluiten': ')', 'en-teken': '&', 'schuine-streep': '/', plus: '+', is: '=' };
-const ONE_LINE_ALIASES = { '‘': "'", '’': "'", '‚': "'", '′': "'", '“': '"', '”': '"', '„': '"', '–': '-', '—': '-', '−': '-', '×': 'x' };
+// typografische tekens (bijv. uit Word) → het teken uit het font; met tekencodes,
+// zodat dit bestand ook zonder UTF-8 goed gelezen wordt
+const ONE_LINE_ALIASES = {}; [[0x2018, "'"], [0x2019, "'"], [0x201A, "'"], [0x2032, "'"], [0x201C, '"'], [0x201D, '"'], [0x201E, '"'], [0x2013, '-'], [0x2014, '-'], [0x2212, '-'], [0xD7, 'x']].forEach(([c, t]) => { ONE_LINE_ALIASES[String.fromCharCode(c)] = t; });
+const COMBINING_RE = new RegExp('[' + String.fromCharCode(0x300) + '-' + String.fromCharCode(0x36f) + ']', 'g');
 let fontLoaded = false;
 function loadOneLineFont() {
   if (fontLoaded) return true;
@@ -474,7 +477,7 @@ function oneLineGlyph(ch) {
   if (ONE_LINE_ALIASES[ch]) ch = ONE_LINE_ALIASES[ch];
   if (oneLineFont[ch]) return oneLineFont[ch];
   const lo = ch.toLowerCase(); if (oneLineFont[lo]) return oneLineFont[lo];
-  const base = ch.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const base = ch.normalize('NFD').replace(COMBINING_RE, '');
   if (base !== ch) return oneLineFont[base] || oneLineFont[base.toLowerCase()] || null;
   return null;
 }
@@ -669,7 +672,7 @@ function reliefField(runs, key) {
   if (reliefCache.has(key)) return reliefCache.get(key);
   const C = 8, OX = -240, OY = -240, GW = Math.ceil((FW + 480) / C), GH = Math.ceil((FH + 480) / C), N = GW * GH;
   const cell = new Uint8Array(N); // 0 leeg, 1 lijn, 2 buiten
-  const R = 2;
+  const R = 1;
   runs.forEach(r => { if (!r.visible) return; r.pts.forEach(p => {
     const gx = Math.floor((p.x - OX) / C), gy = Math.floor((p.y - OY) / C);
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) { if (dx * dx + dy * dy > R * R + 1) continue; const x = gx + dx, y = gy + dy; if (x >= 0 && y >= 0 && x < GW && y < GH) cell[y * GW + x] = 1; }
@@ -690,7 +693,8 @@ function reliefField(runs, key) {
   }
   let mx = 0; for (let i = 0; i < N; i++) if (cell[i] !== 2 && dist[i] < 1e8) mx = Math.max(mx, dist[i]);
   let h = new Float32Array(N);
-  if (mx > 0) for (let i = 0; i < N; i++) h[i] = cell[i] === 2 ? 0 : Math.sqrt(Math.min(dist[i], mx) / mx);
+  // hoogte loopt zacht op vanaf de rand en vlakt dan af: subtiel, geen ballon
+  if (mx > 0) for (let i = 0; i < N; i++) h[i] = cell[i] === 2 ? 0 : 1 - Math.exp(-Math.min(dist[i], mx) / 5);
   // twee keer vervagen voor een zachte bolling
   for (let pass = 0; pass < 3; pass++) {
     const o = new Float32Array(N);
@@ -710,6 +714,48 @@ function reliefField(runs, key) {
   if (reliefCache.size > 60) reliefCache.clear();
   reliefCache.set(key, f);
   return f;
+}
+// Ronde hoeken zoals bij de kleine letters: waar de lijn echt een hoek maakt
+// (ook waar twee letters aansluiten) komt een korte, vloeiende bocht. Rechte
+// en gebogen stukken blijven zoals ze zijn.
+function roundCorners(out, rad) {
+  const P = out.p, V = out.v;
+  let i = 0;
+  while (i < P.length) {
+    let j = i + 1; while (j < P.length && V[j]) j++;
+    if (j - i > 8) roundRun(P, i, j - 1, rad);
+    i = j;
+  }
+}
+function roundRun(P, a, b, rad) {
+  const n = b - a + 1, d3 = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+  let L = 0; for (let k = 1; k < n; k++) L += d3(P[a + k], P[a + k - 1]);
+  const sp = L / (n - 1); if (!(sp > 0)) return;
+  const k0 = Math.max(2, Math.round(rad / sp)), w = Math.max(2, Math.round(k0 * .6));
+  const turn = new Float32Array(n);
+  for (let k = w; k < n - w; k++) {
+    const p0 = P[a + k - w], p1 = P[a + k], p2 = P[a + k + w];
+    const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2], vx = p2[0] - p1[0], vy = p2[1] - p1[1], vz = p2[2] - p1[2];
+    const lu = Math.hypot(ux, uy, uz), lv = Math.hypot(vx, vy, vz);
+    if (lu > 1e-9 && lv > 1e-9) turn[k] = Math.acos(clamp((ux * vx + uy * vy + uz * vz) / (lu * lv), -1, 1));
+  }
+  const TH = 30 * DEG;
+  for (let k = w; k < n - w; k++) {
+    if (turn[k] < TH) continue;
+    let isMax = true; for (let m = Math.max(0, k - w); m <= Math.min(n - 1, k + w); m++) if (turn[m] > turn[k]) { isMax = false; break; }
+    if (!isMax) continue;
+    // Een keerpunt (top van A, M, N) krijgt een smalle, ronde top die bijna
+    // even hoog blijft; een gewone hoek een korte bocht.
+    const cusp = turn[k] > 2.2, kk = Math.max(2, Math.round(k0 * (cusp ? 1.25 : 1)));
+    const s0 = Math.max(0, k - kk), e0 = Math.min(n - 1, k + kk);
+    const A = P[a + s0].slice(), C = P[a + k].slice(), B = P[a + e0].slice();
+    for (let m = s0; m <= e0; m++) {
+      const t = (m - s0) / (e0 - s0), u = 1 - t;
+      const wA = cusp ? u * u * u : u * u, wC = cusp ? 3 * u * u * t + 3 * u * t * t : 2 * u * t, wB = cusp ? t * t * t : t * t;
+      P[a + m] = [wA * A[0] + wC * C[0] + wB * B[0], wA * A[1] + wC * C[1] + wB * B[1], wA * A[2] + wC * C[2] + wB * B[2]];
+    }
+    k = e0;
+  }
 }
 // Maakt de puntenlijst (lokaal 3D) van één lijnelement.
 // Resultaat: { p:[[x,y,z]], c:[hex], v:[bool] }  (v[k] = stuk k-1→k getekend)
@@ -798,6 +844,7 @@ function itemPolyline(it, slide, theme) {
       out.p.push(q); out.c.push(r.col); out.v.push(vis); last = q;
     });
   });
+  if (it.type === 'olt') roundCorners(out, 17 * sc * U);
   return out;
 }
 // Lijnkader rond een afbeelding of video: de pen tekent eerst het kader.
@@ -2003,7 +2050,7 @@ class Player {
     let yaw = this.user.yaw, pitch = this.user.pitch;
     const t = this.time;
     if (sl.motion === 'zweven') { yaw += Math.sin(t * .23) * 4; pitch += Math.sin(t * .17) * 2.2; }
-    else if (sl.motion === 'rondje') { yaw += Math.sin(t * .28) * 24; pitch += Math.sin(t * .19) * 7; }
+    else if (sl.motion === 'rondje') { yaw += Math.sin(t * .25) * 17; pitch += Math.sin(t * .17) * 5; }
     let zoom = this.user.zoom, offset = null;
     if (this.state === 'drawing' && st.drawCam !== 'rustig' && this.pen) {
       const S = w.stations[i];
@@ -2282,6 +2329,6 @@ G.OLP3D = {
   THREE, FW, FH, U, FOV, THEMES, LINE_STYLES, FONTS, FONT_FILES, SHAPES, SHAPE_DEFORMS, LINKS, MOTIONS, DEFAULT_SETTINGS,
   normalizeDoc, normalizeSlide, normalizeItem, newId, safeColor, sanitizeSvgText, readSvg, parsePathD,
   loadOneLineFont, composeOneLineText, oneLineMissing, shapePreviewPath, measureTextItem, fontsUsed, loadFonts,
-  World, Player, startStandalone, resolveSrc, cleanSegments, ytApi, VIDEO_KINDS, FRAMES, YT_ID_RE, themeOf, clamp, lerp, mulberry, hashStr
+  World, Player, startStandalone, resolveSrc, cleanSegments, ytApi, _itemPolyline: itemPolyline, VIDEO_KINDS, FRAMES, YT_ID_RE, themeOf, clamp, lerp, mulberry, hashStr
 };
 })(window);

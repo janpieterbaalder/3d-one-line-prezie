@@ -42,6 +42,13 @@ function toast(msg, type, ms) {
   $('#toasts').appendChild(t);
   setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 320); }, ms || 2600);
 }
+function actionToast(msg, label, fn, ms) {
+  const b = h('button', { class: 'btn pink', style: 'margin-left:12px;padding:6px 12px;pointer-events:auto' }, label);
+  const t = h('div', { class: 'toast ok', style: 'display:flex;align-items:center;pointer-events:auto' }, msg, b);
+  const close = () => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 320); };
+  b.addEventListener('click', () => { close(); fn(); });
+  $('#toasts').appendChild(t); setTimeout(close, ms || 10000);
+}
 function busy(txt) { $('#busy').classList.toggle('on', !!txt); if (txt) $('#busytxt').textContent = txt; }
 function theme() { return O.themeOf(doc.settings); }
 // ── media (afbeeldingen en video's) apart bewaren, zodat ongedaan maken en
@@ -437,7 +444,7 @@ function renderSlides() {
   clearTimeout(thumbsT);
   const box = $('#slides');
   const top = box.scrollTop;
-  box.innerHTML = doc.slides.map((s, i) => `<div class="sl ${i === cur ? 'on' : ''}" draggable="true" data-i="${i}"><div class="th">${thumbSVG(s)}</div><div class="meta"><span class="n">${i + 1}</span><span class="t">${esc(s.title || autoTitle(s))}</span></div><div class="acts"><button data-a="dup" title="Dupliceren">⧉</button><button data-a="del" title="Verwijderen">✕</button></div></div>`).join('')
+  box.innerHTML = doc.slides.map((s, i) => `<div class="sl ${i === cur ? 'on' : ''}" draggable="true" data-i="${i}"><div class="th">${thumbSVG(s)}</div><div class="meta"><span class="n">${i + 1}</span><span class="t">${esc(s.title || autoTitle(s))}</span></div><div class="acts"><button data-a="up" title="Eerder in de presentatie">↑</button><button data-a="down" title="Later in de presentatie">↓</button><button data-a="dup" title="Dupliceren">⧉</button><button data-a="del" title="Verwijderen">✕</button></div></div>`).join('')
     + `<button class="addslide" data-a="add">＋ Nieuwe dia</button>`;
   box.scrollTop = top;
 }
@@ -449,6 +456,8 @@ function bindSlides() {
     if (!sl) return;
     const i = +sl.dataset.i;
     if (a && a.dataset.a === 'dup') { duplicateSlide(i); return; }
+    if (a && a.dataset.a === 'up') { reorderSlide(i, i - 1); return; }
+    if (a && a.dataset.a === 'down') { reorderSlide(i, i + 1); return; }
     if (a && a.dataset.a === 'del') { deleteSlide(i); return; }
     selectSlide(i, true);
   });
@@ -459,13 +468,23 @@ function bindSlides() {
   box.addEventListener('drop', e => {
     if (from < 0) return; e.preventDefault();
     const sl = e.target.closest('.sl'); let to = sl ? +sl.dataset.i : doc.slides.length - 1;
-    if (to !== from) {
-      const [m] = doc.slides.splice(from, 1); doc.slides.splice(to, 0, m);
-      cur = to; sel = -1; changed({ list: true, panel: true, now: true });
-    }
+    if (to !== from) reorderSlide(from, to);
     from = -1; $$('.sl', box).forEach(s => s.classList.remove('drag-over'));
   });
   box.addEventListener('dragend', () => { from = -1; $$('.sl', box).forEach(s => s.classList.remove('drag-over')); });
+}
+// Dia verplaatsen in de volgorde. De presentatie volgt de nieuwe volgorde;
+// de plekken in de ruimte blijven op hun route, zodat de reis door de
+// ruimte gewoon doorloopt (de dia's wisselen van plek op die route).
+function reorderSlide(from, to) {
+  if (to < 0 || to >= doc.slides.length || to === from) return;
+  const slots = doc.slides.map(sl => JSON.parse(JSON.stringify({ pos: sl.pos, rot: sl.rot, scale: sl.scale })));
+  const [m] = doc.slides.splice(from, 1); doc.slides.splice(to, 0, m);
+  doc.slides.forEach((sl, i) => Object.assign(sl, slots[i]));
+  cur = to; sel = -1;
+  rebuildNow(); changed({ list: true, panel: true, rebuild: false });
+  goToSlideView(true);
+  toast('Dia ' + (from + 1) + ' is nu dia ' + (to + 1));
 }
 function selectSlide(i, fly) {
   if (i < 0 || i >= doc.slides.length) return;
@@ -534,18 +553,13 @@ function oltBox(src, cx, cy, hPerLine) {
   if (w > 1700) { h *= 1700 / w; w = 1700; }
   return { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w: Math.round(w), h: Math.round(h) };
 }
-// Bibliotheek: voeg de 3D-versie toe (echt 3D-model, reliëf of tekst als lijn).
-function addLibrary(entry, flat) {
-  const L = window.OLP3D_MODELS ? window.OLP3D_MODELS.libraryFor(entry.file) : null;
-  if (flat || !L) { pushItem({ type: 'svg', svg: entry.svg, name: entry.name, x: 0, y: 0, w: FW, h: FH }); return; }
-  if (L.model) {
-    const s = slide();
-    if (s && !s.items.length && s.motion === 'zweven') s.motion = 'rondje';
-    pushItem({ type: 'model', model: L.model, name: entry.name, x: 530, y: 110, w: 860, h: 860 });
-  } else if (L.text) {
-    const src = O.composeOneLineText(L.text);
-    pushItem({ type: 'olt', text: L.text, src, deform: L.deform || 'golf', depth: L.depth || 1, ...oltBox(src, FW / 2, FH * .45, 300) });
-  } else pushItem({ type: 'svg', svg: entry.svg, name: entry.name, x: 0, y: 0, w: FW, h: FH, deform: 'relief', depth: L.relief || 2.2 });
+// Bibliotheek: de platte 2D-tekeningen (3D staat apart, bij 3D-tekeningen).
+function addLibrary(entry) {
+  pushItem({ type: 'svg', svg: entry.svg, name: entry.name, x: 0, y: 0, w: FW, h: FH });
+}
+// Een figuur uit de bibliotheek met subtiel reliëf (bij de 3D-tekeningen)
+function addRelief(entry, depth) {
+  pushItem({ type: 'svg', svg: entry.svg, name: entry.name, x: 0, y: 0, w: FW, h: FH, deform: 'relief', depth: depth || .75 });
 }
 function addSvgText(text, name) {
   const clean = O.sanitizeSvgText(text);
@@ -891,13 +905,13 @@ function openLibrary() {
   const fill = q => {
     grid.innerHTML = '';
     lib.filter(e => !q || e.name.toLowerCase().includes(q)).forEach(e => {
-      grid.appendChild(h('button', { title: e.name + ' — klik = 3D-versie, Shift+klik = plat 2D-origineel', onclick: ev => { closeFn && closeFn(null); addLibrary(e, ev.shiftKey); } }, h('img', { src: svgDataUrl(e.svg), alt: e.name, loading: 'lazy' }), h('span', {}, e.name)));
+      grid.appendChild(h('button', { title: e.name, onclick: () => { closeFn && closeFn(null); addLibrary(e); } }, h('img', { src: svgDataUrl(e.svg), alt: e.name, loading: 'lazy' }), h('span', {}, e.name)));
     });
   };
   let closeFn = null;
   search.addEventListener('input', () => fill(search.value.trim().toLowerCase()));
   fill('');
-  dialog({ title: 'Tekening uit bibliotheek', body: grid, wide: true, search, onOpen: (d, close) => { closeFn = close; setTimeout(() => search.focus(), 30); } });
+  dialog({ title: '2D-tekening uit bibliotheek', body: grid, wide: true, search, onOpen: (d, close) => { closeFn = close; setTimeout(() => search.focus(), 30); } });
 }
 function openShapes() {
   const grid = h('div', { class: 'lib dark' });
@@ -915,9 +929,14 @@ function openShapes() {
     const b = h('button', { title: m.name, onclick: () => { closeFn && closeFn(null); addModel(k); } }, h('span', { html: '' }), h('span', {}, m.name));
     b.firstChild.outerHTML = svg; grid2.appendChild(b);
   });
-  dialog({ title: '3D-vormen en 3D-tekeningen', wide: true, body: h('div', {},
-    h('p', { class: 'note' }, 'Alles hieronder is echt 3D en getekend met één doorlopende lijn: de camera kan er tijdens het presenteren omheen draaien (beweging “Rondje om tekening”).'),
+  const grid3 = h('div', { class: 'lib' });
+  if (MM) (window.SVG_LIBRARY || []).filter(e => MM.reliefDepth(e.file) > 0).forEach(e => {
+    grid3.appendChild(h('button', { title: e.name + ' (reliëf)', onclick: () => { closeFn && closeFn(null); addRelief(e, MM.reliefDepth(e.file)); } }, h('img', { src: svgDataUrl(e.svg), alt: e.name, loading: 'lazy' }), h('span', {}, e.name)));
+  });
+  dialog({ title: '3D: tekeningen, figuren en vormen', wide: true, body: h('div', {},
+    h('p', { class: 'note' }, 'Alles hieronder is 3D: de camera kan er tijdens het presenteren omheen draaien (beweging “Rondje om tekening”). Platte tekeningen vind je bij 2D-tekening uit bibliotheek.'),
     h('div', { class: 'sec' }, h('h4', {}, '3D-tekeningen'), grid2),
+    h('div', { class: 'sec' }, h('h4', {}, 'Figuren in reliëf'), grid3),
     h('div', { class: 'sec' }, h('h4', {}, 'Wiskundige vormen'), grid)), onOpen: (d, close) => { closeFn = close; } });
 }
 async function askOltText(title, value, ok) {
@@ -1017,9 +1036,9 @@ function panelSlide(p) {
 }
 function addButtons() {
   return h('div', { class: 'addrow' },
-    h('button', { onclick: openLibrary }, h('span', {}, '✎'), 'Tekening'),
+    h('button', { onclick: openLibrary }, h('span', {}, '✎'), '2D-tekening'),
     h('button', { onclick: addOlt }, h('span', {}, 'ℓ'), 'Tekst als lijn'),
-    h('button', { onclick: openShapes }, h('span', {}, '◍'), '3D-vorm'),
+    h('button', { onclick: openShapes }, h('span', {}, '◍'), '3D'),
     h('button', { onclick: addText }, h('span', {}, 'T'), 'Tekst'),
     h('button', { onclick: () => $('#file-img').click() }, h('span', {}, '▣'), 'Afbeelding'),
     h('button', { onclick: openVideoChoice }, h('span', {}, '▶'), 'Video'),
@@ -1255,29 +1274,32 @@ function applyLinks(kind, quiet) {
 
 // ── voorbeeld ───────────────────────────────────────────────────────────
 function libEntry(prefix) { return (window.SVG_LIBRARY || []).find(e => e.file.toLowerCase().startsWith(prefix)); }
+// ── showcase: een presentatie die laat zien wat je met de app kunt ──────
 function demoDoc() {
   const lib = (f, extra) => { const e = libEntry(f); return e ? Object.assign({ type: 'svg', svg: e.svg, name: e.name, x: 0, y: 0, w: FW, h: FH }, extra || {}) : null; };
   const olt = (text, cy, hh, extra) => { const src = O.composeOneLineText(text); if (!src) return null; return Object.assign({ type: 'olt', text, src }, oltBox(src, FW / 2, cy, hh), extra || {}); };
   const txt = (text, cy, size, extra) => { const it = O.normalizeItem(Object.assign({ type: 'text', text, size, align: 'center', w: 1700, font: 'Cormorant Garamond' }, extra || {})); const m = O.measureTextItem(it); it.x = Math.round((FW - m.w) / 2); it.y = Math.round(cy - m.h / 2); return it; };
   const shape = (name, x, y, sz, extra) => Object.assign({ type: 'shape', shape: name, x, y, w: sz, h: sz, detail: 5 }, extra || {});
+  const model = (name, x, y, sz, extra) => Object.assign({ type: 'model', model: name, x, y, w: sz, h: sz }, extra || {});
   const slides = [
-    { title: 'Welkom', items: [olt('Welkom', 470, 330), txt('in de derde dimensie', 820, 84, { italic: true })], motion: 'zweven' },
-    { title: 'Eén lijn', items: [lib('wandelaar', { deform: 'relief', depth: 2.6 }), txt('Eén lijn die door de ruimte reist', 930, 70)] },
-    { title: '3D-vormen', items: [shape('bol', 260, 170, 640), shape('hart', 1030, 190, 600), txt('Ook echte 3D-vormen: één doorlopende lijn', 960, 62)], motion: 'rondje' },
-    { title: 'Kompas', items: [{ type: 'model', model: 'kompas', name: 'Kompas', x: 560, y: 120, w: 800, h: 800 }, txt('De bibliotheek is nu echt 3D', 975, 62)], motion: 'rondje' },
-    { title: 'Richting', items: [{ type: 'model', model: 'wegwijzer', name: 'Wegwijzer', x: 560, y: 100, w: 820, h: 820 }, txt('Draai er gerust omheen', 975, 62)], motion: 'rondje' },
-    { title: 'DNA', items: [shape('dna', 640, 110, 640, { tiltX: 8, tiltY: -30 }), olt('van idee tot uitvoering', 930, 150)], motion: 'rondje' },
-    { title: 'Loslaten', items: [{ type: 'model', model: 'boom', name: 'Boom', x: 560, y: 90, w: 820, h: 820 }, txt('Druk op O voor het overzicht', 975, 62, { italic: true })], motion: 'rondje' },
-    { title: 'Tot ziens', items: [olt('Tot ziens!', 520, 340), txt('3D One Line Prezi', 860, 70, { font: 'Outfit' })] }
-  ].map(s => Object.assign(s, { items: s.items.filter(Boolean) }));
-  const d = O.normalizeDoc({ title: 'Voorbeeld — 3D One Line Prezi', settings: { world: 'y2k', travelCam: 'volgen', drawCam: 'meekijken' }, slides });
-  return d;
+    { title: 'One Line', lineColor: '#68e3d6', items: [olt('One Line', 430, 360), txt('een presentatie in drie dimensies', 830, 76, { italic: true })] },
+    { title: 'Eén lijn', lineColor: '#ff9ad5', link: 'spiraal', items: [lib('wandelaar', { deform: 'relief', depth: .8 }), txt('Eén lijn die door de ruimte reist', 975, 64)] },
+    { title: 'Kompas', lineColor: '#fff38c', tint: '#161245', motion: 'rondje', items: [model('kompas', 590, 100, 740), txt('Echte 3D-tekeningen — de camera draait mee', 985, 60)] },
+    { title: 'Zandloper', lineColor: '#c9b0f7', motion: 'rondje', link: 'lus', items: [model('zandloper', 610, 80, 700), txt('Neem de tijd', 990, 64, { italic: true })] },
+    { title: 'Wiskunde', lineColor: '#68e3d6', tint: '#0b2b3a', motion: 'rondje', items: [shape('bol', 230, 180, 650), shape('knoop', 1040, 180, 650), txt('Wiskunde in één doorlopende lijn', 975, 60)] },
+    { title: 'Bouwen', lineColor: '#ff5eb8', motion: 'rondje', link: 'golf', items: [model('rubiks', 200, 160, 700), model('lego', 1020, 160, 700), txt('Bouwen, stapelen en draaien', 975, 62)] },
+    { title: 'Tekst als lijn', lineColor: '#7ff3e1', items: [olt('Tekst als lijn', 470, 300, { deform: 'cilinder', depth: 1 }), txt('handgeschreven — en gebogen in de ruimte', 840, 64, { italic: true })] },
+    { title: 'Mensen', lineColor: '#ffd166', tint: '#1d1650', items: [lib('gesprek.svg', { deform: 'relief', depth: .7 }), txt('Figuren met een subtiel reliëf', 975, 62)] },
+    { title: 'Loslaten', lineColor: '#9cffb8', tint: '#0f2a2c', motion: 'rondje', link: 'lus', items: [model('boom', 580, 70, 760), txt('Loslaten', 985, 70, { italic: true })] },
+    { title: 'Balans', lineColor: '#fff38c', motion: 'rondje', items: [model('weegschaal', 590, 80, 740), txt('Alles in balans', 985, 64)] },
+    { title: 'Jouw verhaal', lineColor: '#ff5eb8', items: [olt('Jouw verhaal', 470, 320), txt('Druk op O voor het hele kunstwerk', 840, 60, { italic: true })] }
+  ].map(sl => Object.assign(sl, { items: sl.items.filter(Boolean) }));
+  return O.normalizeDoc({ title: 'Showcase — 3D One Line Prezi', settings: { world: 'nacht', glow: 3.5, frame: 'kaart', travelCam: 'volgen', drawCam: 'meekijken', drawSpeed: 6 }, slides });
 }
 function loadDemo() {
   setDoc(demoDoc());
-  applyLayout('trap', true); applyLinks('afwisselend', true);
-  doc.slides[doc.slides.length - 2].link = 'lus';
-  fileHandle = null; fileName = ''; dirty = false;
+  applyLayout('trap', true);
+  fileHandle = null; fileName = ''; dirty = false; cur = 0;
   rebuildNow(); renderAll(); snapshotNow(true); fitAll(false);
 }
 
@@ -1469,23 +1491,29 @@ const DB = {
 let autoT = null;
 function scheduleAutosave() { clearTimeout(autoT); autoT = setTimeout(autosave, 1200); }
 function autosave() { DB.set('autosave', { json: JSON.stringify(doc, noMedia), fileName, dirty, time: Date.now(), cur, media: 2 }).catch(() => {}); }
+// Opstarten: altijd met de showcase. Je vorige werk staat klaar om verder te gaan.
 async function restoreOrDemo() {
   let saved = null;
   try { saved = await DB.get('autosave'); } catch (e) {}
-  if (saved && saved.json) {
-    try {
-      const d = JSON.parse(saved.json);
-      if (d && Array.isArray(d.slides) && d.slides.length) {
-        if (!d.media) { d.media = {}; for (const sl of d.slides) for (const it of (sl.items || [])) if (typeof it.src === 'string' && it.src.startsWith('media:')) { const v = await DB.get('m:' + it.src.slice(6)).catch(() => null); if (v) d.media[it.src.slice(6)] = v; } }
-        cur = saved.cur || 0; setDoc(d, true); fileName = saved.fileName || ''; dirty = !!saved.dirty;
-        renderAll(); fitAll(false); snapshotNow(true);
-        if (saved.dirty) toast('Je laatste werk is teruggezet', 'ok', 3200);
-        return;
-      }
-    } catch (e) {}
-  }
   loadDemo();
-  toast('Welkom! Dit is een voorbeeld — druk op ▶ Presenteren', 'ok', 4500);
+  let hasPrev = false;
+  try { const d = saved && saved.json && JSON.parse(saved.json); hasPrev = !!(d && Array.isArray(d.slides) && d.slides.length); } catch (e) {}
+  if (hasPrev) {
+    await DB.set('previous', saved).catch(() => {});
+    actionToast('Welkom! Je vorige presentatie staat klaar.', 'Ga verder met mijn werk', restorePrevious, 14000);
+  } else toast('Welkom! Druk op ▶ Presenteren en zie wat je ermee kunt', 'ok', 5000);
+}
+async function restorePrevious() {
+  let saved = null;
+  try { saved = await DB.get('previous'); } catch (e) {}
+  if (!saved || !saved.json) { toast('Er is geen vorige presentatie bewaard', 'err'); return; }
+  try {
+    const d = JSON.parse(saved.json);
+    if (!d.media) { d.media = {}; for (const sl of d.slides) for (const it of (sl.items || [])) if (typeof it.src === 'string' && it.src.startsWith('media:')) { const v = await DB.get('m:' + it.src.slice(6)).catch(() => null); if (v) d.media[it.src.slice(6)] = v; } }
+    cur = saved.cur || 0; setDoc(d, true); fileName = saved.fileName || ''; fileHandle = null; dirty = !!saved.dirty;
+    renderAll(); fitAll(false); snapshotNow(true); scheduleAutosave();
+    toast('Je vorige presentatie is teruggezet', 'ok');
+  } catch (e) { toast('Terugzetten mislukt', 'err'); }
 }
 
 // ── menu's & toetsen ────────────────────────────────────────────────────
@@ -1496,7 +1524,8 @@ function bindTop() {
   document.addEventListener('click', e => { if (!e.target.closest('.menu')) closeMenus(); });
   const acts = {
     new: newDoc, open: openFile, save: () => save(false), saveas: () => save(true), import2d: openFile, export: exportHTML, record: recordVideo,
-    demo: async () => { if (await confirmDiscard()) { loadDemo(); toast('Voorbeeld geladen', 'ok'); } },
+    demo: async () => { if (await confirmDiscard()) { loadDemo(); toast('Showcase geladen', 'ok'); } },
+    previous: restorePrevious,
     video: () => $('#file-video').click(), videolink: addVideoLink, youtube: addYouTube,
     slide: () => addSlide(), library: openLibrary, svgfile: () => $('#file-svg').click(), olt: addOlt, shape: openShapes, text: addText, image: () => $('#file-img').click()
   };

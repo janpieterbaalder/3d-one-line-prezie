@@ -70,7 +70,7 @@ button{cursor:pointer}
 .sl .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 .sl .acts{position:absolute;top:9px;right:9px;display:none;gap:3px}
 .sl:hover .acts{display:flex}
-.sl .acts button{border:0;width:22px;height:22px;border-radius:6px;background:rgba(20,15,40,.8);color:#fff;font-size:12px;display:grid;place-items:center}
+.sl .acts button{border:0;width:21px;height:21px;border-radius:6px;background:rgba(20,15,40,.8);color:#fff;font-size:12px;display:grid;place-items:center}
 .sl .acts button:hover{background:var(--pink)}
 .sl.drag-over{border-top-color:var(--cyan)}
 .addslide{width:100%;border:1.5px dashed var(--line-2);background:transparent;border-radius:10px;padding:12px;color:var(--muted)}
@@ -219,15 +219,16 @@ input[type=color]{width:34px;height:28px;border:1px solid var(--line);border-rad
       <button data-act="export"><span class="ic">⟐</span>Exporteren als HTML…</button>
       <button data-act="record"><span class="ic">●</span>Opnemen als video…</button>
       <hr>
-      <button data-act="demo"><span class="ic">★</span>Voorbeeldpresentatie laden</button>
+      <button data-act="demo"><span class="ic">★</span>Showcase-presentatie laden</button>
+      <button data-act="previous"><span class="ic">↺</span>Vorige sessie terugzetten</button>
     </div></div>
     <div class="menu" data-menu="add"><button class="tbtn">Toevoegen ▾</button><div class="drop">
       <button data-act="slide"><span class="ic">▭</span>Nieuwe dia</button>
       <hr>
-      <button data-act="library"><span class="ic">✎</span>Tekening uit bibliotheek…</button>
+      <button data-act="library"><span class="ic">✎</span>2D-tekening uit bibliotheek…</button>
       <button data-act="svgfile"><span class="ic">⇪</span>SVG-bestand…</button>
       <button data-act="olt"><span class="ic">ℓ</span>Tekst als lijn…</button>
-      <button data-act="shape"><span class="ic">◍</span>3D-vorm of 3D-tekening…</button>
+      <button data-act="shape"><span class="ic">◍</span>3D-tekening, figuur of vorm…</button>
       <hr>
       <button data-act="text"><span class="ic">T</span>Tekst</button>
       <button data-act="image"><span class="ic">▣</span>Afbeelding…</button>
