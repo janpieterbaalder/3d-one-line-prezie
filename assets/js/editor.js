@@ -269,6 +269,7 @@ function bindStage() {
   ov.addEventListener('dblclick', e => {
     const box = e.target.closest('.box'); if (!box) return;
     const it = slide().items[+box.dataset.i];
+    if (it && it.type === 'video') { openVideoEditor(it); return; }
     if (it && (it.type === 'text' || it.type === 'olt')) { tab = 'item'; renderTabs(); renderPanel(); setTimeout(() => { const t = $('#panel textarea'); if (t) { t.focus(); t.select(); } }, 30); }
   });
   // bestanden slepen
@@ -669,6 +670,7 @@ async function addVideoFile(f) {
   const meta = await probeVideo(data);
   if (!meta) { toast('Deze video kan de browser niet afspelen (gebruik MP4 of WebM)', 'err', 4000); return; }
   pushItem({ type: 'video', kind: 'file', src: addMedia(data), name: f.name.replace(/\.[^.]+$/, ''), autoplay: true, ...videoBox(meta) });
+  toast('Tip: kies met ✂ welke stukken je laat zien', 'ok', 3500);
 }
 async function askText(title, help, value, ok) {
   const inp = h('input', { type: 'text', value: value || '', placeholder: 'https://…', style: 'font-size:15px' });
@@ -685,7 +687,9 @@ async function addVideoLink() {
 async function addYouTube() {
   const raw = await askText('YouTube-video', 'Plak de link van de YouTube-video. Een link met ?t=90 begint vanzelf op die tijd. YouTube heeft internet nodig en kan reclame tonen.', '', 'Toevoegen'); if (!raw) return;
   const id = extractYouTubeID(raw); if (!id) { toast('Dat is geen YouTube-link', 'err'); return; }
-  pushItem({ type: 'video', kind: 'youtube', src: id, name: 'YouTube', start: parseYouTubeStart(raw), autoplay: true, ...videoBox(null) });
+  const st0 = parseYouTubeStart(raw);
+  pushItem({ type: 'video', kind: 'youtube', src: id, name: 'YouTube', segments: st0 ? [{ s: st0, e: null }] : [], autoplay: true, ...videoBox(null) });
+  toast('Tip: kies met ✂ welke stukken je laat zien', 'ok', 3500);
 }
 function openVideoChoice() {
   dialog({ title: 'Video toevoegen', body: h('div', { class: 'grid2' },
@@ -709,11 +713,173 @@ function videoPanel(it, ch) {
   out.push(check('Automatisch starten', it.autoplay, v => { it.autoplay = v; ch(false); }));
   out.push(check('Geluid aan', !it.muted, v => { it.muted = !v; ch(false); }));
   out.push(check('Herhalen', it.loop, v => { it.loop = v; ch(false); }));
-  const st = h('input', { type: 'text', value: it.start ? fmtTime(it.start) : '', placeholder: '0:00' }); st.addEventListener('change', () => { it.start = parseTime(st.value); ch(); });
-  const en = h('input', { type: 'text', value: it.end ? fmtTime(it.end) : '', placeholder: 'tot het eind' }); en.addEventListener('change', () => { it.end = parseTime(en.value); ch(false); });
-  out.push(h('div', { class: 'grid2' }, row('Begin', st), row('Einde', en)));
+  out.push(h('button', { class: 'btn pink full', style: 'margin-top:6px', onclick: () => openVideoEditor(it) }, '✂ Afspelen en stukjes kiezen…'));
+  out.push(h('p', { class: 've-legend', style: 'margin:6px 0 0' }, segSummary(it)));
   out.push(h('p', { class: 'note' }, 'Tijdens het presenteren tekent de lijn eerst een kader; daarna verschijnt de video. Zonder “automatisch starten” start de volgende klik eerst de video. K = afspelen/pauzeren, of klik op de video.' + (it.kind === 'youtube' ? ' YouTube wordt niet meegenomen in een video-opname.' : '')));
   return out;
+}
+
+// ── video-editor: afspelen en kiezen welke stukken je laat zien ──────────
+// Stukjes zijn [{s, e}] (seconden, e = null = tot het eind). Geen stukjes =
+// de hele video. Je markeert een stuk (begin/einde) en kiest "laten zien"
+// of "weghalen"; de randen van een stukje kun je op de tijdlijn verslepen.
+function segSummary(it) {
+  const sg = it.segments || [];
+  if (!sg.length) return 'Hele video';
+  return sg.length + (sg.length === 1 ? ' stukje: ' : ' stukjes: ') + sg.map(x => fmtTime(x.s) + '–' + (x.e == null ? 'eind' : fmtTime(x.e))).join(', ');
+}
+async function openVideoEditor(it) {
+  const src = it.kind === 'youtube' ? it.src : O.resolveSrc(doc, it.src);
+  if (!src) { toast('Deze video heeft nog geen bron', 'err'); return; }
+  let segs = O.cleanSegments(it.segments).map(x => ({ ...x }));
+  let dur = 0, markA = null, markB = null, preview = false, raf = 0, yt = null, alive = true;
+  const stage = h('div', { class: 've-stage' });
+  const P = { t: () => 0, play() {}, pause() {}, seek() {}, playing: () => false };
+  let video = null;
+  if (it.kind === 'youtube') {
+    stage.appendChild(h('div', { id: 've-yt' }));
+  } else {
+    video = h('video', { playsinline: true, preload: 'auto' }); video.src = src; stage.appendChild(video);
+    video.addEventListener('loadedmetadata', () => { dur = video.duration || 0; render(); });
+    video.addEventListener('click', () => P.playing() ? P.pause() : P.play());
+    P.t = () => video.currentTime; P.play = () => video.play().catch(() => {}); P.pause = () => video.pause();
+    P.seek = t => { try { video.currentTime = clamp(t, 0, dur || t); } catch (e) {} }; P.playing = () => !video.paused;
+  }
+  const time = h('span', { class: 've-time' }, '0:00.0');
+  const playBtn = h('button', { class: 'btn pink', title: 'Afspelen / pauzeren (spatie)', onclick: () => { preview = false; P.playing() ? P.pause() : P.play(); } }, '▶ Afspelen');
+  const tl = h('div', { class: 've-tl', title: 'Klik om naar dat moment te gaan' });
+  const markInfo = h('span', { class: 've-legend' });
+  const keepBtn = h('button', { class: 'btn', onclick: () => applyMark('keep') }, '✓ Dit stuk laten zien');
+  const cutBtn = h('button', { class: 'btn', onclick: () => applyMark('cut') }, '✂ Dit stuk weghalen');
+  const list = h('div', { class: 've-list' });
+  const sum = h('p', { class: 've-legend' });
+  const T = () => P.t() || 0;
+  const len = () => dur || Math.max(1, ...segs.map(x => x.e || x.s + 1));
+  const iv = () => segs.map(x => [x.s, x.e == null ? len() : x.e]);
+  const toSegs = arr => O.cleanSegments(arr.filter(([a, b]) => b - a > .2).map(([a, b]) => ({ s: Math.max(0, a), e: b >= len() - .15 ? null : b })));
+  const isWhole = () => !segs.length || (segs.length === 1 && segs[0].s <= .05 && segs[0].e == null);
+  function applyMark(kind) {
+    if (markA == null || markB == null || markB - markA < .2) { toast('Markeer eerst een begin en een einde (knoppen [ en ])', 'err'); return; }
+    const a = markA, b = markB;
+    if (kind === 'keep') segs = toSegs((isWhole() ? [] : iv()).concat([[a, b]]));
+    else {
+      const out = [];
+      (isWhole() ? [[0, len()]] : iv()).forEach(([x, y]) => { if (b <= x || a >= y) out.push([x, y]); else { if (a > x) out.push([x, a]); if (b < y) out.push([b, y]); } });
+      const n = toSegs(out);
+      if (!n.length) { toast('Dan blijft er niets over van de video', 'err'); return; }
+      segs = n;
+    }
+    if (isWhole()) segs = [];
+    markA = markB = null; render();
+  }
+  const pct = t => (clamp(t / len(), 0, 1) * 100) + '%';
+  function render() {
+    tl.innerHTML = '';
+    const shown = isWhole() ? [[0, len()]] : iv();
+    shown.forEach(([a, b], k) => {
+      const blk = h('div', { class: 've-keep', style: `left:${pct(a)};width:calc(${pct(b)} - ${pct(a)})` });
+      if (!isWhole()) {
+        blk.appendChild(h('i', { class: 'l', 'data-k': k, 'data-side': 's', title: 'Sleep om het begin te verschuiven' }));
+        blk.appendChild(h('i', { class: 'r', 'data-k': k, 'data-side': 'e', title: 'Sleep om het einde te verschuiven' }));
+      }
+      tl.appendChild(blk);
+    });
+    if (markA != null) tl.appendChild(h('div', { class: 've-mark', style: `left:${pct(markA)};width:calc(${pct(markB ?? T())} - ${pct(markA)})` }));
+    tl.appendChild(h('div', { class: 've-head', style: `left:${pct(T())}` }));
+    markInfo.textContent = markA == null ? 'Nog niets gemarkeerd' : 'Gemarkeerd: ' + fmtTime(markA) + ' – ' + (markB == null ? '…' : fmtTime(markB));
+    keepBtn.disabled = cutBtn.disabled = !(markA != null && markB != null && markB > markA);
+    list.innerHTML = '';
+    if (isWhole()) list.appendChild(h('p', { class: 've-legend' }, 'De hele video wordt getoond. Markeer een stuk en kies “laten zien” of “weghalen”.'));
+    else segs.forEach((x, k) => {
+      const si = h('input', { type: 'text', value: fmtTime(x.s) }), ei = h('input', { type: 'text', value: x.e == null ? '' : fmtTime(x.e), placeholder: 'eind' });
+      si.addEventListener('change', () => { x.s = parseTime(si.value); segs = O.cleanSegments(segs); if (!segs.length) segs = []; render(); });
+      ei.addEventListener('change', () => { x.e = ei.value.trim() ? parseTime(ei.value) : null; segs = O.cleanSegments(segs); render(); });
+      list.appendChild(h('div', { class: 've-row' }, h('b', {}, 'Stukje ' + (k + 1)), si, h('span', {}, 'tot'), ei,
+        h('button', { class: 'ibtn', title: 'Dit stukje afspelen', onclick: () => { preview = false; P.seek(x.s); P.play(); } }, '▶'),
+        h('button', { class: 'ibtn', title: 'Dit stukje weghalen', onclick: () => { segs.splice(k, 1); if (!segs.length) toast('Geen stukjes meer: de hele video wordt getoond'); render(); } }, '✕')));
+    });
+    const total = (isWhole() ? [[0, len()]] : iv()).reduce((n, [a, b]) => n + (b - a), 0);
+    sum.textContent = dur ? `Lengte video ${fmtTime(dur)} · in de presentatie ${fmtTime(total)}` : 'Video laden…';
+  }
+  // tijdlijn: klikken = spoelen, randen verslepen = stukje aanpassen
+  tl.addEventListener('pointerdown', e => {
+    const r = tl.getBoundingClientRect(), tAt = ev => clamp((ev.clientX - r.left) / r.width, 0, 1) * len();
+    const hd = e.target.closest('i[data-k]');
+    if (!hd) { P.seek(tAt(e)); render(); return; }
+    e.preventDefault(); preview = false; P.pause();
+    const k = +hd.dataset.k, side = hd.dataset.side, arr = iv();
+    const mv = ev => {
+      const t = tAt(ev), lo = k > 0 ? arr[k - 1][1] + .2 : 0, hi = k < arr.length - 1 ? arr[k + 1][0] - .2 : len();
+      if (side === 's') arr[k][0] = clamp(t, lo, arr[k][1] - .3); else arr[k][1] = clamp(t, arr[k][0] + .3, hi);
+      segs = toSegs(arr.map(x => x.slice())); P.seek(side === 's' ? arr[k][0] : arr[k][1]); render();
+    };
+    const up = () => { document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up); };
+    document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
+  });
+  const step = d => { preview = false; P.seek(Math.max(0, T() + d)); render(); };
+  const markIn = () => { markA = T(); if (markB != null && markB <= markA) markB = null; render(); };
+  const markOut = () => { const t = T(); if (markA == null || t <= markA) { markA = Math.max(0, t - 5); } markB = t; render(); };
+  const body = h('div', { class: 've' }, stage,
+    h('div', { class: 've-ctrl' },
+      h('button', { class: 'btn', title: '5 seconden terug (←)', onclick: () => step(-5) }, '⏪ 5 s'), playBtn,
+      h('button', { class: 'btn', title: '5 seconden vooruit (→)', onclick: () => step(5) }, '5 s ⏩'), time,
+      h('span', { style: 'flex:1' }),
+      h('button', { class: 'btn', title: 'Speel alleen de gekozen stukjes, zoals in de presentatie', onclick: () => { const fst = isWhole() ? 0 : segs[0].s; preview = true; P.seek(fst); P.play(); } }, '▶ Bekijk het resultaat')),
+    tl,
+    h('div', { class: 've-legend' }, h('span', { class: 've-sw keep' }), ' wordt getoond   ', h('span', { class: 've-sw cut' }), ' wordt overgeslagen   ', h('span', { class: 've-sw mark' }), ' gemarkeerd'),
+    h('div', { class: 've-ctrl' },
+      h('button', { class: 'btn', title: 'Begin van het stuk = nu (toets I)', onclick: markIn }, '[ Begin hier'),
+      h('button', { class: 'btn', title: 'Einde van het stuk = nu (toets O)', onclick: markOut }, 'Einde hier ]'), markInfo,
+      h('span', { style: 'flex:1' }), keepBtn, cutBtn),
+    list, sum,
+    h('div', { class: 've-ctrl' }, h('button', { class: 'btn', onclick: () => { segs = []; markA = markB = null; render(); } }, '↺ Hele video laten zien'),
+      h('span', { class: 've-legend' }, 'Toetsen: spatie = afspelen · I = begin · O = einde · ← → = 1 s (Shift = 5 s)')));
+  const onKey = e => {
+    if (e.target.tagName === 'INPUT') return;
+    const k = e.key;
+    if (k === ' ') { e.preventDefault(); preview = false; P.playing() ? P.pause() : P.play(); }
+    else if (k === 'i' || k === 'I') { e.preventDefault(); markIn(); }
+    else if (k === 'o' || k === 'O') { e.preventDefault(); markOut(); }
+    else if (k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); step((k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 5 : 1)); }
+  };
+  document.addEventListener('keydown', onKey, true);
+  const tick = () => {
+    if (!alive) return;
+    raf = requestAnimationFrame(tick);
+    if (yt && !dur && yt.getDuration) { const d = yt.getDuration(); if (d > 0) { dur = d; render(); } }
+    const t = T();
+    time.textContent = fmtTime(t) + (dur ? ' / ' + fmtTime(dur) : '');
+    playBtn.textContent = P.playing() ? '⏸ Pauze' : '▶ Afspelen';
+    const head = tl.querySelector('.ve-head'); if (head) head.style.left = pct(t);
+    const mk = tl.querySelector('.ve-mark'); if (mk && markB == null) mk.style.width = `calc(${pct(Math.max(t, markA))} - ${pct(markA)})`;
+    if (preview && P.playing() && !isWhole()) {
+      const i = segs.findIndex(sg => sg.e == null || t < sg.e - .08);
+      if (i === -1) { P.pause(); preview = false; } else if (t < segs[i].s - .3) P.seek(segs[i].s);
+    }
+  };
+  render();
+  const res = await dialog({
+    title: '✂ Video: kies wat je laat zien' + (it.name ? ' — ' + it.name : ''), wide: true, body,
+    buttons: [{ label: 'Annuleren', value: null }, { label: 'Opslaan', value: 'ok', pink: true }],
+    onOpen: async () => {
+      raf = requestAnimationFrame(tick);
+      if (it.kind === 'youtube') {
+        try { await O.ytApi(); } catch (e) { toast('YouTube kan niet geladen worden (internet nodig)', 'err', 4000); return; }
+        if (!alive) return;
+        yt = new YT.Player('ve-yt', { videoId: it.src, host: 'https://www.youtube-nocookie.com', width: '100%', height: '100%',
+          playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+          events: { onReady: e => { dur = e.target.getDuration() || 0; render(); } } });
+        P.t = () => (yt && yt.getCurrentTime ? yt.getCurrentTime() : 0); P.play = () => yt && yt.playVideo && yt.playVideo(); P.pause = () => yt && yt.pauseVideo && yt.pauseVideo();
+        P.seek = t => yt && yt.seekTo && yt.seekTo(Math.max(0, t), true); P.playing = () => !!(yt && yt.getPlayerState && yt.getPlayerState() === 1);
+      }
+    }
+  });
+  alive = false; cancelAnimationFrame(raf); document.removeEventListener('keydown', onKey, true);
+  try { if (video) { video.pause(); video.removeAttribute('src'); video.load(); } if (yt && yt.destroy) yt.destroy(); } catch (e) {}
+  if (res === 'ok') {
+    it.segments = isWhole() ? [] : segs.map(x => ({ s: x.s, e: x.e }));
+    changed({ panel: true }); toast(segSummary(it), 'ok', 3500);
+  }
 }
 
 // ── bibliotheek & vormen ────────────────────────────────────────────────
@@ -1135,8 +1301,8 @@ function from2D(d) {
     (Array.isArray(s.mediaBlocks) ? s.mediaBlocks : []).sort((a, b) => (a.zOrder || 0) - (b.zOrder || 0)).forEach(mb => {
       if (!mb) return;
       if (mb.type === 'svgtext') items.push({ type: 'olt', text: mb.text || '', letterColors: mb.letterColors || [], src: '', x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0 });
-      else if (mb.type === 'video' && mb.src) { const sg = Array.isArray(mb.segments) && mb.segments[0]; items.push({ type: 'video', kind: /^https?:/i.test(mb.src) ? 'link' : 'file', src: /^https?:/i.test(mb.src) ? mb.src : mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, autoplay: mb.autoplay !== false, muted: mb.muted !== false, loop: mb.loop !== false, start: sg ? sg.start || sg[0] || 0 : 0, end: sg ? sg.end || sg[1] || 0 : 0 }); }
-      else if (mb.type === 'youtube' && mb.src) { const sg = Array.isArray(mb.segments) && mb.segments[0]; items.push({ type: 'video', kind: 'youtube', src: mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, autoplay: mb.autoplay !== false, start: (sg && (sg.start || sg[0])) || mb.start || 0, end: sg ? sg.end || sg[1] || 0 : 0 }); }
+      else if (mb.type === 'video' && mb.src) items.push({ type: 'video', kind: /^https?:/i.test(mb.src) ? 'link' : 'file', src: mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, autoplay: mb.autoplay !== false, muted: mb.muted !== false, loop: mb.loop !== false, segments: mb.segments || [] });
+      else if (mb.type === 'youtube' && mb.src) items.push({ type: 'video', kind: 'youtube', src: mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, autoplay: mb.autoplay !== false, segments: (mb.segments && mb.segments.length) ? mb.segments : (mb.start ? [{ s: mb.start, e: null }] : []) });
       else if ((mb.type || 'image') === 'image' && mb.src) items.push({ type: 'image', src: mb.src, x: mb.x, y: mb.y, w: mb.width, h: mb.height, rot: mb.rotation || 0, opacity: mb.opacity ?? 1 });
       else skipped++;
     });

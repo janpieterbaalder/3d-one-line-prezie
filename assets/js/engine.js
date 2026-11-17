@@ -139,7 +139,9 @@ function normalizeItem(it) {
     b.src = src;
     b.name = strOr(it.name, '');
     b.autoplay = !!it.autoplay; b.muted = !!it.muted; b.loop = !!it.loop;
-    b.start = Math.max(0, numOr(it.start, 0)); b.end = Math.max(0, numOr(it.end, 0));
+    // stukjes die getoond worden (zoals in de 2D-app): [{s, e}], e = null = tot het eind
+    b.segments = cleanSegments(it.segments);
+    if (!b.segments.length && (numOr(it.start, 0) > 0 || numOr(it.end, 0) > 0)) b.segments = cleanSegments([{ s: Math.max(0, numOr(it.start, 0)), e: numOr(it.end, 0) || null }]);
   } else if (type === 'text') {
     b.w = Math.max(40, numOr(it.w, 1600));
     b.text = strOr(it.text, 'Tekst');
@@ -200,6 +202,33 @@ function normalizeDoc(d) {
   const media = {};
   if (d.media && typeof d.media === 'object') for (const [k, v] of Object.entries(d.media)) { if (/^[\w-]{1,64}$/.test(k) && typeof v === 'string' && /^data:(image|video)\//i.test(v)) media[k] = v; }
   return { app: '3D One Line Prezi', version: 2, title: strOr(d.title, ''), settings: st, slides, media };
+}
+function cleanSegments(list) {
+  if (!Array.isArray(list)) return [];
+  const out = list.filter(x => x && isFinite(x.s) && x.s >= 0 && (x.e == null || (isFinite(x.e) && x.e > x.s + .2)))
+    .map(x => ({ s: Math.round(x.s * 10) / 10, e: x.e == null ? null : Math.round(x.e * 10) / 10 })).sort((p, q) => p.s - q.s);
+  const merged = [];
+  for (const x of out) {
+    const last = merged[merged.length - 1];
+    if (last && (last.e == null || x.s <= last.e)) { if (last.e != null) last.e = x.e == null ? null : Math.max(last.e, x.e); }
+    else merged.push({ ...x });
+  }
+  return merged.slice(0, 50);
+}
+const segStart = it => (it.segments && it.segments[0] ? it.segments[0].s : 0);
+let ytApiP = null;
+function ytApi() {
+  if (G.YT && G.YT.Player) return Promise.resolve();
+  if (ytApiP) return ytApiP;
+  ytApiP = new Promise((res, rej) => {
+    const prev = G.onYouTubeIframeAPIReady;
+    G.onYouTubeIframeAPIReady = () => { if (prev) try { prev(); } catch (e) {} res(); };
+    const sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api';
+    sc.onerror = () => { ytApiP = null; rej(new Error('YouTube')); };
+    document.head.appendChild(sc);
+    setTimeout(() => { if (!(G.YT && G.YT.Player)) { ytApiP = null; rej(new Error('YouTube')); } }, 15000);
+  });
+  return ytApiP;
 }
 function resolveSrc(doc, src) {
   if (src && MEDIA_RE.test(src)) return (doc && doc.media && doc.media[src.slice(6)]) || '';
@@ -1139,7 +1168,7 @@ function videoPlaceholder(it) {
 function posterFor(vd, done) {
   const it = vd.it;
   if (!vd.src) return;
-  const key = 'p:' + (it.kind === 'youtube' ? it.src : hashStr(vd.src)) + ':' + (it.start || 0);
+  const key = 'p:' + (it.kind === 'youtube' ? it.src : hashStr(vd.src)) + ':' + segStart(it);
   const hit = posterCache.get(key);
   if (hit && hit.isTexture) { done(hit); return; }
   if (hit === 'bezig' || hit === 'mislukt') return;
@@ -1151,7 +1180,7 @@ function posterFor(vd, done) {
   }
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; if (it.kind === 'link') v.crossOrigin = 'anonymous';
-  v.addEventListener('loadeddata', () => { try { v.currentTime = Math.max(.05, it.start || 0); } catch (e) {} }, { once: true });
+  v.addEventListener('loadeddata', () => { try { v.currentTime = Math.max(.05, segStart(it)); } catch (e) {} }, { once: true });
   v.addEventListener('seeked', () => {
     try {
       const c = document.createElement('canvas'); c.width = Math.min(960, v.videoWidth || 640); c.height = Math.round(c.width * (v.videoHeight || 360) / (v.videoWidth || 640));
@@ -1165,8 +1194,7 @@ function posterFor(vd, done) {
 }
 function youTubeUrl(it, origin) {
   const p = new URLSearchParams({ enablejsapi: '1', playsinline: '1', rel: '0', modestbranding: '1', controls: '1' });
-  if (it.start) p.set('start', String(Math.floor(it.start)));
-  if (it.end) p.set('end', String(Math.floor(it.end)));
+  if (segStart(it)) p.set('start', String(Math.floor(segStart(it))));
   if (it.muted) p.set('mute', '1');
   if (it.loop) { p.set('loop', '1'); p.set('playlist', it.src); }
   if (origin && /^https?:/.test(origin)) p.set('origin', origin);
@@ -1554,6 +1582,7 @@ const PLAYER_CSS = `
 .olp-media{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .olp-media-el{position:absolute;left:0;top:0;transform-origin:0 0;border:0;background:#000;pointer-events:auto;opacity:0}
 .olp-media video.olp-media-el{object-fit:contain;cursor:pointer}
+.olp-media-el iframe{width:100%;height:100%;border:0;display:block}
 `;
 let cssInjected = false;
 function injectPlayerCSS() { if (cssInjected) return; cssInjected = true; const s = document.createElement('style'); s.textContent = PLAYER_CSS; document.head.appendChild(s); }
@@ -2071,20 +2100,27 @@ class Player {
     if (vd.el || !vd.src) return;
     const it = vd.it;
     if (it.kind === 'youtube') {
-      const f = document.createElement('iframe'); f.className = 'olp-media-el';
-      f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; f.setAttribute('allowfullscreen', '');
-      f.width = 960; f.height = Math.round(960 * it.h / it.w); f.style.width = '960px'; f.style.height = f.height + 'px';
-      const u = youTubeUrl(it, location.origin) + '&autoplay=1';
-      f.src = u; vd.el = f; vd.overlay = true; this.mediaLayer.appendChild(f);
+      const box = document.createElement('div'); box.className = 'olp-media-el';
+      box.style.width = '960px'; box.style.height = Math.round(960 * it.h / it.w) + 'px';
+      const inner = document.createElement('div'); box.appendChild(inner);
+      this.mediaLayer.appendChild(box); vd.el = box; vd.overlay = true;
+      ytApi().then(() => {
+        if (this.exited) return;
+        vd.yt = new YT.Player(inner, {
+          videoId: it.src, host: 'https://www.youtube-nocookie.com', width: '100%', height: '100%',
+          playerVars: { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(segStart(it)), mute: it.muted ? 1 : 0 },
+          events: {
+            onReady: e => { vd.ytReady = true; if (vd.wantPlay) { this.resumeAt(vd); e.target.playVideo(); } },
+            onStateChange: e => { if (e.data === 0 && it.loop) { e.target.seekTo(segStart(it), true); e.target.playVideo(); } }
+          }
+        });
+      }).catch(() => this.hint('YouTube kan niet geladen worden (internet nodig)', 3000));
       return;
     }
     const v = document.createElement('video');
     v.playsInline = true; v.preload = 'auto'; v.muted = !!it.muted;
     if (it.kind === 'link') v.crossOrigin = 'anonymous';
-    v.addEventListener('timeupdate', () => {
-      if (it.end && v.currentTime >= it.end) { if (it.loop) v.currentTime = it.start || 0; else v.pause(); }
-    });
-    v.addEventListener('ended', () => { if (it.loop) { v.currentTime = it.start || 0; v.play().catch(() => {}); } });
+    v.addEventListener('ended', () => { if (it.loop) { v.currentTime = segStart(it); v.play().catch(() => {}); } });
     v.addEventListener('error', () => {
       // link zonder CORS: dan als los element over de dia afspelen
       if (it.kind === 'link' && v.crossOrigin && !vd.retried) {
@@ -2096,28 +2132,40 @@ class Player {
     });
     v.src = vd.src;
     vd.el = v;
-    if (!vd.overlay) {
-      const tex = new THREE.VideoTexture(v); tex.colorSpace = THREE.SRGBColorSpace;
-      vd.tex = tex;
-    }
+    if (!vd.overlay) { const tex = new THREE.VideoTexture(v); tex.colorSpace = THREE.SRGBColorSpace; vd.tex = tex; }
+  }
+  videoTime(vd) {
+    if (vd.it.kind === 'youtube') return vd.yt && vd.yt.getCurrentTime ? vd.yt.getCurrentTime() : null;
+    return vd.el ? vd.el.currentTime : null;
+  }
+  seekVideo(vd, t) {
+    if (vd.it.kind === 'youtube') { if (vd.yt && vd.yt.seekTo) vd.yt.seekTo(t, true); }
+    else if (vd.el) { try { vd.el.currentTime = t; } catch (e) {} }
+  }
+  // Waar moet de video (her)beginnen, gezien de gekozen stukjes?
+  resumeAt(vd) {
+    const segs = vd.it.segments || [], t = this.videoTime(vd);
+    if (!segs.length) { if (vd.el && vd.el.ended) this.seekVideo(vd, 0); return; }
+    if (vd.segDone || t == null) { vd.segDone = false; this.seekVideo(vd, segs[0].s); return; }
+    const i = segs.findIndex(sg => sg.e == null || t < sg.e - .08);
+    if (i === -1) this.seekVideo(vd, segs[0].s);
+    else if (t < segs[i].s - .3) this.seekVideo(vd, segs[i].s);
   }
   playVideo(vd) {
     this.ensureVideo(vd); if (!vd.el) return;
     vd.started = true; vd.playing = true; vd.wantPlay = true;
-    if (vd.it.kind === 'youtube') { if (vd.loadedOnce) this.ytCommand(vd, 'playVideo'); vd.loadedOnce = true; return; }
+    if (vd.it.kind === 'youtube') { if (vd.ytReady) { this.resumeAt(vd); vd.yt.playVideo(); } return; }
     const v = vd.el;
     if (vd.tex && !vd.overlay) { vd.m.map = vd.tex; vd.m.needsUpdate = true; }
-    const st = vd.it.start || 0;
-    if (v.currentTime < st || (vd.it.end && v.currentTime >= vd.it.end)) { try { v.currentTime = st; } catch (e) {} }
-    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+    const go = () => { this.resumeAt(vd); v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); };
+    if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
   }
   pauseVideo(vd) {
     vd.playing = false; vd.wantPlay = false;
     if (!vd.el) return;
-    if (vd.it.kind === 'youtube') this.ytCommand(vd, 'pauseVideo'); else vd.el.pause();
+    if (vd.it.kind === 'youtube') { if (vd.yt && vd.yt.pauseVideo) vd.yt.pauseVideo(); } else vd.el.pause();
   }
   toggleVideo(vd) { if (vd.playing) this.pauseVideo(vd); else this.playVideo(vd); }
-  ytCommand(vd, func) { try { vd.el.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: '' }), '*'); } catch (e) {} }
   pauseAll() { (this.videos || []).forEach(vd => { if (vd.playing) this.pauseVideo(vd); vd.started = false; }); }
   toggleMedia() {
     const fx = this.world.stationFx[this.cur]; if (!fx) return;
@@ -2132,6 +2180,17 @@ class Player {
     const hits = rc.intersectObjects(fx.videos.filter(vd => this.itemAlpha(this.cur, vd.it.id) > .5).map(vd => vd.mesh), false);
     return hits.length ? hits[0].object.userData.video : null;
   }
+  // Alleen de gekozen stukjes: aan het eind van een stukje door naar het
+  // volgende; na het laatste stoppen (of opnieuw bij herhalen).
+  watchSegments(vd) {
+    const segs = vd.it.segments; if (!segs || !segs.length || !vd.playing) return;
+    const isYT = vd.it.kind === 'youtube';
+    if (isYT ? !(vd.yt && vd.yt.getPlayerState && vd.yt.getPlayerState() === 1) : (!vd.el || vd.el.paused)) return;
+    const t = this.videoTime(vd); if (t == null || !isFinite(t)) return;
+    const i = segs.findIndex(sg => sg.e == null || t < sg.e - .08);
+    if (i === -1) { if (vd.it.loop) this.seekVideo(vd, segs[0].s); else { this.pauseVideo(vd); vd.segDone = true; } return; }
+    if (t < segs[i].s - .3 && (i > 0 || !isYT || t > .5)) this.seekVideo(vd, segs[i].s);
+  }
   updateMedia() {
     if (!this.videos || !this.videos.length) return;
     const w = this.world, cam = this.camera(), r = this.canvas.getBoundingClientRect(), er = this.el.getBoundingClientRect();
@@ -2141,6 +2200,7 @@ class Player {
       // automatisch starten zodra het kader af is en je bij de dia bent
       if (vd.it.autoplay && !vd.started && vd.station === this.cur && a > .6 && (this.state === 'idle' || this.state === 'drawing')) this.playVideo(vd);
       if (vd.playing && vd.station !== this.cur && this.state !== 'overview') this.pauseVideo(vd);
+      this.watchSegments(vd);
       if (!vd.overlay || !vd.el) return;
       const el = vd.el, it = vd.it;
       if (a < .02) { el.style.opacity = '0'; el.style.visibility = 'hidden'; return; }
@@ -2159,10 +2219,13 @@ class Player {
     });
   }
   disposeMedia() {
-    (this.videos || []).forEach(vd => { if (vd.el) { try { vd.el.pause && vd.el.pause(); } catch (e) {} vd.el.remove(); } if (vd.tex) vd.tex.dispose(); });
+    (this.videos || []).forEach(vd => {
+      try { if (vd.yt && vd.yt.destroy) vd.yt.destroy(); } catch (e) {}
+      if (vd.el) { try { vd.el.pause && vd.el.pause(); } catch (e) {} vd.el.remove(); }
+      if (vd.tex) vd.tex.dispose();
+    });
     if (this.mediaLayer) this.mediaLayer.remove();
   }
-
   // ── opnemen als video ──
   startRecording() {
     const types = ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
@@ -2219,6 +2282,6 @@ G.OLP3D = {
   THREE, FW, FH, U, FOV, THEMES, LINE_STYLES, FONTS, FONT_FILES, SHAPES, SHAPE_DEFORMS, LINKS, MOTIONS, DEFAULT_SETTINGS,
   normalizeDoc, normalizeSlide, normalizeItem, newId, safeColor, sanitizeSvgText, readSvg, parsePathD,
   loadOneLineFont, composeOneLineText, oneLineMissing, shapePreviewPath, measureTextItem, fontsUsed, loadFonts,
-  World, Player, startStandalone, resolveSrc, VIDEO_KINDS, FRAMES, YT_ID_RE, themeOf, clamp, lerp, mulberry, hashStr
+  World, Player, startStandalone, resolveSrc, cleanSegments, ytApi, VIDEO_KINDS, FRAMES, YT_ID_RE, themeOf, clamp, lerp, mulberry, hashStr
 };
 })(window);
