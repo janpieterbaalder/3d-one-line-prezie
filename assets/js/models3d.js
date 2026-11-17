@@ -57,7 +57,7 @@ class Pen {
     let k0 = 0;
     if (!this.p.length) { this.p.push(pts[0]); this.v.push(false); k0 = 1; }
     else if (len(sub(this.last, pts[0])) < 1e-6) k0 = 1;
-    else if (jump) { this.p.push(pts[0]); this.v.push(false); k0 = 1; }
+    else if (jump || len(sub(this.last, pts[0])) > .15) { this.p.push(pts[0]); this.v.push(false); k0 = 1; }
     for (let k = k0; k < pts.length; k++) { this.p.push(pts[k]); this.v.push(true); }
     return this;
   }
@@ -66,6 +66,45 @@ class Pen {
 }
 const ring = (y, r, a0, rr) => arc([0, y, 0], X, Z, r, a0 ?? 90, (a0 ?? 90) + 360, rr);
 const at = (a, y, r) => [r * Math.cos(a * D), y, r * Math.sin(a * D)];
+// rechthoek met ronde hoeken in het vlak (u, v) rond c
+function rrect(c, u, v, w, h, r) {
+  const hw = w / 2, hh = h / 2; r = Math.min(r, hw * .99, hh * .99);
+  const p2 = (x, y) => add(c, add(mul(u, x), mul(v, y))), pts = [p2(0, -hh)];
+  [[hw - r, -hh + r, -90], [hw - r, hh - r, 0], [-hw + r, hh - r, 90], [-hw + r, -hh + r, 180]].forEach(([cx, cy, a0]) => {
+    for (let k = 0; k <= 8; k++) { const a = (a0 + 90 * k / 8) * D; pts.push(p2(cx + r * Math.cos(a), cy + r * Math.sin(a))); }
+  });
+  pts.push(p2(0, -hh));
+  return poly(pts);
+}
+// bolletje als spiraal, van onder naar boven
+function ball(c, r, turns) { turns = turns || 5; return revolve(t => [Math.sin(t * Math.PI) * r, -Math.cos(t * Math.PI) * r], turns, Math.ceil(60 * turns), 90).map(p => add(p, c)); }
+function perp(d) { return unit(cross(d, Math.abs(d[1]) < .9 ? Y : X)); }
+// touw: spiraal om het lijnstuk a→b
+function coil(a, b, r, turns) { const d = unit(sub(b, a)), p1 = perp(d), p2 = cross(d, p1), n = Math.ceil(turns * 40), o = []; for (let k = 0; k <= n; k++) { const t = k / n, c = lerp3(a, b, t), g = turns * 2 * Math.PI * t; o.push(add(c, add(mul(p1, r * Math.cos(g)), mul(p2, r * Math.sin(g))))); } return o; }
+// gevlochten ring (spiraal om een cirkel)
+function ropeRing(c, u, v, R, r, wraps) { const w = cross(u, v), n = Math.ceil(wraps * 30), o = []; for (let k = 0; k <= n; k++) { const t = -Math.PI / 2 + k / n * 2 * Math.PI, ph = wraps * (t + Math.PI / 2), rad = add(mul(u, Math.cos(t)), mul(v, Math.sin(t))); o.push(add(c, add(mul(rad, R + r * Math.cos(ph)), mul(w, r * Math.sin(ph))))); } return o; }
+// ketting van a naar b: schakels om en om gedraaid
+function chain(a, b, nLinks, size) { const d = unit(sub(b, a)), p1 = perp(d), p2 = cross(d, p1), step = len(sub(b, a)) / nLinks, out = []; for (let k = 0; k < nLinks; k++) out.push(rrect(add(a, mul(d, step * (k + .5))), d, k % 2 ? p1 : p2, step * 1.25, size, size * .49)); return out; }
+// Zachte hoeken: elke lijn gelijkmatig verdelen en licht gladstrijken, zodat
+// er nergens een harde hoek overblijft (de vorm zelf blijft gelijk).
+function smoothRuns(p, v, sp, it) {
+  const P2 = [], V2 = [];
+  let i = 0;
+  while (i < p.length) {
+    let j = i + 1; while (j < p.length && v[j]) j++;
+    let run = p.slice(i, j);
+    if (run.length > 1) {
+      const cum = [0]; for (let k = 1; k < run.length; k++) cum.push(cum[k - 1] + len(sub(run[k], run[k - 1])));
+      const L = cum[cum.length - 1], n = Math.max(1, Math.round(L / sp)), r2 = []; let q = 1;
+      for (let k = 0; k <= n; k++) { const tg = L * k / n; while (q < cum.length - 1 && cum[q] < tg) q++; const sg = cum[q] - cum[q - 1] || 1; r2.push(lerp3(run[q - 1], run[q], Math.min(1, Math.max(0, (tg - cum[q - 1]) / sg)))); }
+      run = r2;
+      for (let r = 0; r < it; r++) { const o = [run[0]]; for (let k = 1; k < run.length - 1; k++) o.push([.25 * run[k - 1][0] + .5 * run[k][0] + .25 * run[k + 1][0], .25 * run[k - 1][1] + .5 * run[k][1] + .25 * run[k + 1][1], .25 * run[k - 1][2] + .5 * run[k][2] + .25 * run[k + 1][2]]); o.push(run[run.length - 1]); run = o; }
+    }
+    run.forEach((q2, k) => { P2.push(q2); V2.push(k > 0); });
+    i = j;
+  }
+  return { p: P2, v: V2 };
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 const MODELS = {};
@@ -95,26 +134,6 @@ MODELS.kompas = { name: 'Kompas', tilt: [10, -28], build() {
   return P;
 } };
 
-MODELS.zandloper = { name: 'Zandloper', tilt: [16, -20], build(d) {
-  const P = new Pen(), R = .72, rp = .62;
-  P.add(ring(1, R, 30)); P.add(seg(at(30, 1, R), at(30, .88, R))); P.add(ring(.88, R, 30));
-  P.add(seg(at(30, .88, R), at(30, .88, rp)));
-  P.add(seg(at(30, .88, rp), at(30, -.88, rp)));               // paal 1
-  P.add(seg(at(30, -.88, rp), at(30, -.88, R)));
-  P.add(arc([0, -.88, 0], X, Z, R, 30, 390)); P.add(seg(at(30, -.88, R), at(30, -1, R))); P.add(arc([0, -1, 0], X, Z, R, 30, 390));
-  P.add(seg(at(30, -1, R), at(30, -.88, R)));
-  P.add(arc([0, -.88, 0], X, Z, R, 30, 150)); P.add(seg(at(150, -.88, R), at(150, -.88, rp)));
-  P.add(seg(at(150, -.88, rp), at(150, .88, rp)));             // paal 2
-  P.add(seg(at(150, .88, rp), at(150, .88, R))); P.add(arc([0, .88, 0], X, Z, R, 150, 270)); P.add(seg(at(270, .88, R), at(270, .88, rp)));
-  P.add(seg(at(270, .88, rp), at(270, -.88, rp)));             // paal 3
-  const prof = t => { const y = -.86 + 1.72 * t; return [.07 + .5 * y * y, y]; };
-  P.add(revolve(prof, 4 + Math.round(d / 3), 1400, 270));      // glas
-  const ys = .3, rs = .07 + .5 * ys * ys;
-  P.jump(ring(ys, rs, 270)); P.add(seg(at(270, ys, rs), [0, ys - .05, 0])); P.add(seg([0, ys - .05, 0], [0, -.56, 0])); // zand valt
-  P.add(revolve(t => [.02 + .38 * t, -.56 - .3 * t], 3, 500, 270)); // zandhoop
-  return P;
-} };
-
 MODELS.wegwijzer = { name: 'Wegwijzer', tilt: [8, -30], build() {
   const P = new Pen(), w = .045, yb = -1.15, yt = .92;
   P.add(arc([0, yb, 0], X, Z, .6, 140, 500));                  // grond
@@ -137,25 +156,6 @@ MODELS.wegwijzer = { name: 'Wegwijzer', tilt: [8, -30], build() {
   return P;
 } };
 
-MODELS.anker = { name: 'Anker', tilt: [6, -32], build() {
-  const P = new Pen(), c = [0, -.2, 0], Ro = .8, Ri = .68;
-  const po = a => add(c, [Ro * Math.cos(a * D), Ro * Math.sin(a * D), 0]), pi = a => add(c, [Ri * Math.cos(a * D), Ri * Math.sin(a * D), 0]);
-  const ai = 270 + Math.asin(.05 / Ri) / D, aiL = 270 - Math.asin(.05 / Ri) / D;
-  P.add(poly([pi(200), [-.72, -.3, 0], [-.95, -.16, 0], po(200)]));        // linker ankerblad
-  P.add(arc(c, X, Y, Ro, 200, 340));
-  P.add(poly([po(340), [.95, -.16, 0], [.72, -.3, 0], pi(340)]));           // rechter ankerblad
-  P.add(arc(c, X, Y, Ri, 340, ai));
-  P.add(seg(pi(ai), [.05, .72, 0]));                                         // schacht rechts
-  P.add(poly([[.05, .72, 0], [0, .72, .55]])); P.add(arc([0, .72, .55], X, Y, .05, 180, 540)); // dwarsstok (haaks!)
-  P.add(seg([0, .72, .55], [0, .72, -.55])); P.add(arc([0, .72, -.55], X, Y, .05, 180, 540));
-  P.add(seg([0, .72, -.55], [.05, .72, 0]));
-  P.add(seg([.05, .72, 0], [.05, .85, 0]));
-  P.add(arc([0, 1.0, 0], X, Y, .155, -71, 251));                              // oog
-  P.add(seg([-.05, .85, 0], pi(aiL)));                                        // schacht links
-  P.add(arc(c, X, Y, Ri, aiL, 200));
-  return P;
-} };
-
 MODELS.appel = { name: 'Appel', tilt: [14, -20], build(d) {
   const P = new Pen();
   const prof = t => { const ph = t * Math.PI; const r = Math.sin(ph) * (1 + .12 * Math.cos(ph)) * .92; let y = -Math.cos(ph) * .78; y -= .16 * Math.exp(-Math.pow((Math.PI - ph) / .5, 2)); y += .08 * Math.exp(-Math.pow(ph / .45, 2)); return [r, y]; };
@@ -164,41 +164,6 @@ MODELS.appel = { name: 'Appel', tilt: [14, -20], build(d) {
   P.add(bez(top, [0, .78, 0], [.02, .92, .02], [.08, 1.04, .03]));            // steeltje
   const s = [.035, .86, .015], tip = [.52, 1.02, .22], m1 = [.22, 1.06, .02], m2 = [.36, .82, .24];
   P.jump(bez(s, m1, [.42, 1.12, .14], tip)); P.add(bez(tip, [.42, .86, .3], m2, s)); P.add(bez(s, [.2, .95, .1], [.36, .99, .17], tip)); // blad met nerf
-  return P;
-} };
-
-MODELS.boek = { name: 'Boek', tilt: [26, -24], build() {
-  const P = new Pen(), L = .95, W = .62, yc = .13;
-  P.add(poly([[-L, yc, W], [L, yc, W], [L, yc, -W], [-L, yc, -W]]));
-  P.add(arc([-L, 0, -W], X, Y, yc, 90, 270));                                 // rug achter
-  P.add(poly([[-L, -yc, -W], [L, -yc, -W], [L, -yc, W], [-L, -yc, W]]));
-  P.add(arc([-L, 0, W], X, Y, yc, 270, 180));
-  P.add(seg([-L - yc, 0, W], [-L - yc, 0, -W]));                               // rug
-  const ys = [.075, .03, -.015, -.06];
-  ys.forEach((y, i) => {
-    const u = [[-L + .03, y, -W + .03], [L - .03, y, -W + .03], [L - .03, y, W - .03], [-L + .03, y, W - .03]];
-    P.add(poly(i % 2 ? u.slice().reverse() : u));                             // bladzijden
-  });
-  P.jump(bez([-.18, yc, -W], [-.16, -.1, -W - .08], [-.12, -.25, -W - .1], [-.08, -.38, -W - .06])); // leeslint
-  return P;
-} };
-
-MODELS.boeken = { name: 'Boeken', tilt: [10, -26], build() {
-  const P = new Pen(), yb = -.85;
-  P.add(seg([-1.25, yb, .55], [1.25, yb, .55])); P.add(seg([1.25, yb, .55], [1.25, yb, -.5])); // plank
-  const books = [[-1.0, .22, 1.5, .8], [-.76, .17, 1.28, .74], [-.56, .27, 1.66, .86], [-.26, .2, 1.4, .8], [-.03, .16, 1.2, .72]];
-  books.forEach(([x, w, h, d], i) => {
-    const b = box([x, yb, -d / 2], [x + w, yb + h, d / 2]);
-    P.jump(b);
-    const f = d / 2 + .001;
-    P.add(seg(b[b.length - 1], [x, yb + h * .78, f])); P.add(seg([x, yb + h * .78, f], [x + w, yb + h * .78, f])); // band op de rug
-    P.jump(seg([x, yb + h * .2, f], [x + w, yb + h * .2, f]));
-    if (i % 2 === 0) P.jump(arc([x + w / 2, yb + h * .5, f], X, Y, w * .22, -90, 270));
-  });
-  // schuin leunend boek
-  const piv = [.95, yb, 0], tf = p => add(piv, rotZ(sub(p, piv), 24));
-  P.jump(box([.95 - .22, yb, -.42], [.95, yb + 1.45, .42], tf));
-  P.add(seg(tf([.95 - .22, yb + 1.1, .42]), tf([.95, yb + 1.1, .42])));
   return P;
 } };
 
@@ -250,93 +215,6 @@ MODELS.diamant = { name: 'Diamant', tilt: [16, -16], build() {
   return P;
 } };
 
-MODELS.lego = { name: 'Legostenen', tilt: [24, -30], build() {
-  const P = new Pen();
-  const stud = (x, y, z) => [arc([x, y, z], X, Z, .13, 90, 450), seg([x, y, z + .13], [x, y + .1, z + .13]), arc([x, y + .1, z], X, Z, .13, 90, 450)];
-  P.add(box([-1, -.5, -.42], [.6, -.05, .42]));
-  [[0, .21], [0, -.21], [.4, .21], [.4, -.21]].forEach(([x, z]) => stud(x, -.05, z).forEach((s, i) => i ? P.add(s) : P.jump(s)));
-  P.jump(box([-1, -.05, -.42], [-.2, .4, .42]));
-  [[-.8, .21], [-.8, -.21], [-.4, .21], [-.4, -.21]].forEach(([x, z]) => stud(x, .4, z).forEach((s, i) => i ? P.add(s) : P.jump(s)));
-  // derde steen, gedraaid, ervoor
-  const tf = p => add(rotY(p, -25), [1.25, -.5, .35]);
-  P.jump(box([-.4, 0, -.21], [.4, .45, .21], tf));
-  [[-.2, 0], [.2, 0]].forEach(([x, z]) => stud(x, .45, z).map(s => s.map(tf)).forEach((s, i) => i ? P.add(s) : P.jump(s)));
-  return P;
-} };
-
-MODELS.rubiks = { name: "Rubik's kubus", tilt: [24, -34], build() {
-  const P = new Pen(), s = .9, t = s / 3;
-  const loopX = v => poly([[v, -s, -s], [v, s, -s], [v, s, s], [v, -s, s], [v, -s, -s]]);
-  const loopY = v => poly([[-s, v, -s], [s, v, -s], [s, v, s], [-s, v, s], [-s, v, -s]]);
-  const loopZ = v => poly([[-s, -s, v], [s, -s, v], [s, s, v], [-s, s, v], [-s, -s, v]]);
-  P.add(loopX(-s));
-  P.add(seg([-s, -s, -s], [s, -s, -s]));
-  P.add(loopX(s));
-  P.add(poly([[s, -s, -s], [s, -s, s], [-s, -s, s]]));                     // 4 ribben langs x
-  P.add(seg([-s, -s, s], [-s, s, s])); P.add(seg([-s, s, s], [s, s, s])); P.jump(seg([-s, s, -s], [s, s, -s]));
-  [loopX(-t), loopX(t), loopY(-t), loopY(t), loopZ(-t), loopZ(t)].forEach(l => P.jump(l));
-  return P;
-} };
-
-MODELS.taart = { name: 'Taart', tilt: [26, -14], build() {
-  const P = new Pen(), R = .85, yt = .22, yb = -.38, ym = -.08, c0 = 62, c1 = 118, O = [0, 0, 0];
-  const cen = y => [0, y, 0];
-  P.add(arc(cen(yt), X, Z, R, c1, c0 + 360)); P.add(poly([at(c0, yt, R), cen(yt), at(c1, yt, R)]));
-  P.add(seg(at(c1, yt, R), at(c1, yb, R)));
-  P.add(arc(cen(yb), X, Z, R, c1, c0 + 360)); P.add(poly([at(c0, yb, R), cen(yb), at(c1, yb, R), cen(yb), cen(yt)]));
-  P.add(poly([cen(yt), at(c0, yt, R), at(c0, ym, R)]));
-  const cream = []; for (let k = 0; k <= 600; k++) { const a = c0 - (360 - (c1 - c0)) * k / 600; cream.push([R * Math.cos(a * D), ym + .035 * Math.sin(a * D * 16), R * Math.sin(a * D)]); }
-  P.add(cream); P.add(poly([at(c1, ym, R), cen(ym), at(c0, ym, R)]));       // slagroomlaag
-  P.jump(revolve(t => [Math.sin(t * Math.PI) * .1, yt + .1 - Math.cos(t * Math.PI) * .1], 5, 300, 90).map(p => add(p, [0, 0, -.3]))); // kers
-  P.add(bez([0, yt + .2, -.3], [.02, yt + .32, -.3], [.08, yt + .4, -.32], [.14, yt + .44, -.34]));
-  // het uitgesneden stuk, naar voren geschoven
-  const off = [0, -.02, .5], m = p => add(p, off);
-  P.jump(arc(m(cen(yt)), X, Z, R, c0, c1).map(p => p)); P.add(poly([m(at(c1, yt, R)), m(cen(yt)), m(at(c0, yt, R))]));
-  P.add(seg(m(at(c0, yt, R)), m(at(c0, yb, R)))); P.add(arc(m(cen(yb)), X, Z, R, c0, c1)); P.add(poly([m(at(c1, yb, R)), m(cen(yb)), m(cen(yt))]));
-  P.jump(seg(m(at(c1, yb, R)), m(at(c1, yt, R))));
-  P.jump(poly([m(at(c0, ym, R)), m(cen(ym)), m(at(c1, ym, R))]));
-  return P;
-} };
-
-MODELS.sleutel = { name: 'Steeksleutel', tilt: [34, -22], build() {
-  const P = new Pen(), hc = [.62, 0], hr = .32, hw = .09;
-  const o = [];
-  const a0 = 180 - Math.asin(hw / hr) / D;
-  o.push([-.9, hw], [hc[0] + hr * Math.cos(a0 * D), hw]);
-  for (let a = a0; a >= 35; a -= 3) o.push([hc[0] + hr * Math.cos(a * D), hr * Math.sin(a * D)]);
-  o.push([hc[0] + hr * Math.cos(35 * D), hr * Math.sin(35 * D)], [.7, .1], [.7, -.1], [hc[0] + hr * Math.cos(-35 * D), hr * Math.sin(-35 * D)]);
-  for (let a = -35; a >= -a0; a -= 3) o.push([hc[0] + hr * Math.cos(a * D), hr * Math.sin(a * D)]);
-  o.push([hc[0] + hr * Math.cos(-a0 * D), -hw], [-.9, -hw]);
-  for (let a = -90; a >= -270; a -= 10) o.push([-.9 + hw * Math.cos(a * D), hw * Math.sin(a * D)]);
-  o.push([-.9, hw]);
-  const z = .055, f = poly(o.map(p => [p[0], p[1], z])), b = poly(o.map(p => [p[0], p[1], -z]));
-  P.add(f); P.add(seg(f[f.length - 1], b[b.length - 1])); P.add(b.slice().reverse());
-  const jaw = [[.7, .1], [.7, -.1], [hc[0] + hr * Math.cos(35 * D), hr * Math.sin(35 * D)], [hc[0] + hr * Math.cos(-35 * D), hr * Math.sin(-35 * D)]];
-  jaw.forEach(([x, y]) => P.jump(seg([x, y, z], [x, y, -z])));
-  P.jump(arc([-.55, 0, z], X, Y, .045, 0, 360));                              // gaatje in de steel
-  return P;
-} };
-
-MODELS.weegschaal = { name: 'Weegschaal', tilt: [14, -22], build() {
-  const P = new Pen(), yb = -1, by = .72;
-  P.add(ring(yb, .48, 90)); P.add(seg(at(90, yb, .48), at(90, yb + .1, .34))); P.add(ring(yb + .1, .34, 90));
-  P.add(seg(at(90, yb + .1, .34), [0, yb + .1, .05]));
-  P.add(seg([0, yb + .1, .05], [0, by, .05]));                               // zuil
-  P.add(arc([0, by + .12, .05], X, Y, .07, -90, 270));
-  P.add(seg([0, by, .05], [-.95, by, .05]));                                  // balk
-  const pan = (x, hang) => {
-    const top = [x, by, 0], pc = [x, hang, 0], r = .36, A = [90, 210, 330].map(a => add(pc, [r * Math.cos(a * D), 0, r * Math.sin(a * D)]));
-    return [seg(top, A[0]), arc(pc, X, Z, r, 90, 450), seg(A[0], top), seg(top, A[1]), seg(A[1], top), seg(top, A[2]),
-      seg(A[2], add(pc, [r * .62 * Math.cos(330 * D), -.12, r * .62 * Math.sin(330 * D)])), arc(add(pc, [0, -.12, 0]), X, Z, r * .62, 330, 690)];
-  };
-  P.add(seg([-.95, by, .05], [-.95, by, 0]));
-  pan(-.95, -.15).forEach(s => P.add(s));
-  P.jump(seg([-.95, by, .05], [.95, by, .05]));
-  P.add(seg([.95, by, .05], [.95, by, 0]));
-  pan(.95, -.15).forEach(s => P.add(s));
-  return P;
-} };
-
 MODELS.vraagteken = { name: 'Vraagteken', tilt: [8, -34], build() {
   const P = new Pen(), z = .1;
   const c = [0, .42], r = .4, pts = [];
@@ -358,33 +236,221 @@ MODELS.herstel = { name: 'Herstel (veer die tot rust komt)', tilt: [10, -38], bu
   return P;
 } };
 
-MODELS.helling = { name: 'Helling (diagram)', tilt: [16, -30], build() {
-  const P = new Pen(), z = .35, v = [[-1, -.4], [1, -.4], [1, .45], [-1, -.4]];
-  const f = poly(v.map(p => [p[0], p[1], z])), b = poly(v.map(p => [p[0], p[1], -z]));
-  P.add(f); P.add(seg([-1, -.4, z], [-1, -.4, -z])); P.add(b);
-  P.add(poly([[-1, -.4, -z], [1, -.4, -z], [1, -.4, z]])); P.add(poly([[1, -.4, z], [1, .45, z], [1, .45, -z], [1, -.4, -z]]));
-  const xd = .45, yd = -.4 + .85 * (xd + 1) / 2;                            // scheidingswand
-  P.jump(poly([[xd, -.4, z], [xd, yd, z], [xd, yd, -z], [xd, -.4, -z], [xd, -.4, z]]));
-  return P;
-} };
-
-MODELS.trap = { name: 'Trap (diagram)', tilt: [16, -30], build() {
-  const P = new Pen(), z = .35, prof = [[-1, -.4], [1, -.4], [1, .45], [.45, .45], [.45, .2], [-.1, .2], [-1, -.4]];
-  const f = poly(prof.map(p => [p[0], p[1], z])), b = poly(prof.map(p => [p[0], p[1], -z]));
-  P.add(f); P.add(seg(f[f.length - 1], b[b.length - 1])); P.add(b.slice().reverse());
-  prof.slice(1, -1).forEach(p => P.jump(seg([p[0], p[1], z], [p[0], p[1], -z])));
-  [-.1, .45].forEach(x => P.jump(seg([x, -.4, z], [x, -.4, -z])));
-  return P;
-} };
-
-MODELS.opsomming = { name: 'Opsomming', tilt: [12, -30], build() {
+MODELS.zandloper = { name: 'Zandloper', tilt: [14, -22], build(d) {
   const P = new Pen();
-  P.add(box([-1, -.55, -.03], [.55, .55, .03]));                             // kaart
-  const star = (cx, cy, z) => { const o = []; for (let k = 0; k <= 10; k++) { const a = (90 + k * 36) * D, r = k % 2 ? .13 : .33; o.push([cx + r * Math.cos(a), cy + r * Math.sin(a), z]); } return poly(o); };
-  const s1 = star(-.25, .02, .22), s2 = star(-.25, .02, .12);
-  P.jump(s1); P.add(seg(s1[s1.length - 1], s2[0])); P.add(s2);
-  P.jump(seg([.9, .65, .1], [.9, -.7, .1]));
-  [.35, 0, -.35].forEach((y, i) => P.jump(arc([.9, y, .1 + i * .12], X, Y, .09, -90, 270)));
+  const band = (yTop, yBot, R, bulge, a0) => revolve(t => [R + bulge * Math.sin(t * Math.PI), yTop + (yBot - yTop) * t], 3, 540, a0);
+  // bovenplaat met bolle rand en een knop
+  P.add(ring(1.0, .66, 90)); P.add(band(1.0, .86, .66, .08, 90)); P.add(ring(.86, .66, 90));
+  P.jump(ball([0, 1.08, 0], .06, 4));
+  // drie gedraaide palen met kralen
+  const post = ang => {
+    const c = at(ang, 0, .56), beads = [.6, 0, -.6], rb = .05;
+    P.jump(seg(add(c, [0, .86, 0]), add(c, [0, beads[0] + rb, 0])));
+    beads.forEach((b, i) => {
+      const cb = add(c, [0, b, 0]);                                              // sierring: twee ringen
+      P.add(seg(add(cb, [0, rb, 0]), add(cb, [0, rb * .4, .045]))); P.add(arc(add(cb, [0, rb * .4, 0]), Z, X, .045, 0, 360)); P.add(seg(add(cb, [0, rb * .4, .045]), add(cb, [0, -rb * .4, .045]))); P.add(arc(add(cb, [0, -rb * .4, 0]), Z, X, .045, 0, 360)); P.add(seg(add(cb, [0, -rb * .4, .045]), add(cb, [0, -rb, 0])));
+      P.add(seg(add(c, [0, b - rb, 0]), add(c, [0, i < 2 ? beads[i + 1] + rb : -.86, 0])));
+    });
+  };
+  post(30); post(150); post(270);
+  // onderplaat
+  P.jump(ring(-.86, .66, 90)); P.add(band(-.86, -1.0, .66, .08, 90)); P.add(ring(-1.0, .66, 90));
+  // glas: meridianen op en neer
+  const gr = y => .06 + .5 * y * y;
+  const mer = (a, up) => { const o = []; for (let k = 0; k <= 90; k++) { const y = up ? -.84 + 1.68 * k / 90 : .84 - 1.68 * k / 90; o.push(at(a, y, gr(y))); } return o; };
+  P.jump(ring(.84, gr(.84), 0));
+  let top = true;
+  for (let k = 0; k < 8; k++) {
+    const a = k * 45;
+    P.add(mer(a, !top)); top = !top;
+    P.add(arc([0, top ? .84 : -.84, 0], X, Z, gr(.84), a, a + 45));
+  }
+  P.jump(ring(-.84, gr(.84), 0));
+  // zand: bovenste laag, straaltje, hoopje
+  const ys = .32;
+  P.jump(revolve(t => [gr(ys) * (1 - t) + .02 * t, ys - .24 * t * t], 3, 360, 90));
+  P.add(seg([0, ys - .24, .02], [0, -.56, .02]));
+  P.add(revolve(t => [.02 + .4 * t, -.56 - .26 * t], 4, 520, 90));
+  return P;
+} };
+
+MODELS.anker = { name: 'Anker', tilt: [6, -32], build() {
+  const P = new Pen(), c = [0, -.2, 0], Ro = .8, Ri = .68;
+  const po = a => add(c, [Ro * Math.cos(a * D), Ro * Math.sin(a * D), 0]), pi = a => add(c, [Ri * Math.cos(a * D), Ri * Math.sin(a * D), 0]);
+  const ai = 270 + Math.asin(.05 / Ri) / D, aiL = 270 - Math.asin(.05 / Ri) / D;
+  P.add(poly([pi(200), [-.7, -.32, 0], [-.97, -.13, 0], po(200)]));           // linker ankerblad
+  P.add(arc(c, X, Y, Ro, 200, 340));
+  P.add(poly([po(340), [.97, -.13, 0], [.7, -.32, 0], pi(340)]));             // rechter ankerblad
+  P.add(arc(c, X, Y, Ri, 340, ai));
+  P.add(seg(pi(ai), [.05, .72, 0]));                                           // schacht
+  P.add(seg([.05, .72, 0], [0, .72, .5])); P.add(ball([0, .72, .56], .06, 4)); // dwarsstok met bolle uiteinden
+  P.add(seg([0, .72, .5], [0, .72, -.5])); P.add(ball([0, .72, -.56], .06, 4));
+  P.add(seg([0, .72, -.5], [.05, .72, 0]));
+  P.add(seg([.05, .72, 0], [.05, .83, 0]));
+  P.add(arc([0, 1.0, 0], X, Y, .19, -75, 255)); P.add(seg([-.049, .816, 0], [-.031, .885, 0])); P.add(arc([0, 1.0, 0], X, Y, .118, 255, -75)); P.add(seg([.031, .885, 0], [.05, .83, 0])); // oog
+  P.jump(seg([-.05, .83, 0], pi(aiL)));
+  P.add(arc(c, X, Y, Ri, aiL, 200));
+  chain([.15, 1.07, 0], [.78, .5, .05], 5, .075).forEach(l => P.jump(l));      // ketting
+  P.jump(coil([0, .52, 0], [0, -.3, 0], .085, 7));                             // touw om de schacht
+  return P;
+} };
+
+MODELS.boek = { name: 'Open boek', tilt: [36, -16], build() {
+  const P = new Pen(), L = .95, W = .66, lerp1 = (a, b, t) => a + (b - a) * t;
+  const pg = (x, lift) => lift + .2 * Math.sin(Math.min(1, Math.abs(x) / L) * Math.PI / 2) - .05 * Math.exp(-((x / .1) ** 2));
+  const edge = (x0, x1, z, lift) => { const o = []; for (let k = 0; k <= 70; k++) { const x = lerp1(x0, x1, k / 70); o.push([x, pg(x, lift), z]); } return o; };
+  // twee bladzijden met de rug in het midden
+  P.add(edge(0, -L, W, .1)); P.add(seg([-L, pg(-L, .1), W], [-L, pg(-L, .1), -W])); P.add(edge(-L, 0, -W, .1));
+  P.add(seg([0, pg(0, .1), -W], [0, pg(0, .1), W]));
+  P.add(edge(0, L, W, .1)); P.add(seg([L, pg(L, .1), W], [L, pg(L, .1), -W])); P.add(edge(L, 0, -W, .1));
+  // dikte van het papier
+  [.068, .036, .004].forEach(lift => { P.jump(edge(-.14, -L + .02, W, lift)); P.jump(edge(.14, L - .02, W, lift)); });
+  // kaft eronder
+  P.jump(edge(-L - .06, L + .06, W + .05, -.05)); P.add(seg([L + .06, pg(L, -.05), W + .05], [L + .06, pg(L, -.05), -W - .05]));
+  P.add(edge(L + .06, -L - .06, -W - .05, -.05)); P.add(seg([-L - .06, pg(L, -.05), -W - .05], [-L - .06, pg(L, -.05), W + .05]));
+  // tekstregels (woorden) op beide bladzijden
+  for (const side of [-1, 1]) for (let r = 0; r < 6; r++) {
+    const z = .46 - r * .17; let x = .2;
+    while (x < .82) {
+      const wl = .08 + ((r * 7 + x * 13) % 1) * .12, o = [];
+      for (let k = 0; k <= 24; k++) { const xx = side * (x + wl * k / 24); o.push([xx, pg(xx, .1) + .006, z + .014 * Math.sin(k * .8)]); }
+      P.jump(o); x += wl + .05;
+    }
+  }
+  // leeslint over de rug, hangt aan de voorkant naar beneden
+  P.jump(seg([.02, pg(0, .1) + .01, -W + .08], [.02, pg(0, .1) + .01, W - .02]));
+  P.add(bez([.02, pg(0, .1) + .01, W - .02], [.03, -.02, W + .08], [.05, -.18, W + .1], [.08, -.36, W + .06]));
+  return P;
+} };
+
+MODELS.boeken = { name: 'Boekenplank', tilt: [10, -26], build() {
+  const P = new Pen(), yb = -.85;
+  P.add(box([-1.45, yb - .1, -.5], [1.6, yb, .56]));                          // plank
+  const books = [[-1.35, .2, 1.45, .82], [-1.13, .16, 1.24, .74], [-.95, .27, 1.64, .86], [-.66, .18, 1.32, .78], [-.46, .22, 1.52, .8], [-.22, .15, 1.18, .72]];
+  books.forEach(([x, w, h, dd], i) => {
+    const f = dd / 2;
+    P.jump(box([x, yb, -f], [x + w, yb + h, f]));
+    P.jump(seg([x, yb + h * .86, f], [x + w, yb + h * .86, f]));
+    P.jump(seg([x, yb + h * .12, f], [x + w, yb + h * .12, f]));
+    const t = []; for (let k = 0; k <= 60; k++) t.push([x + w / 2 + w * .16 * Math.sin(k * .55 + i), yb + h * (.3 + .45 * k / 60), f]);
+    P.jump(t);                                                                  // titel op de rug
+    if (i % 2 === 0) P.jump(rrect([x + w / 2, yb + h * .2, f + .001], X, Y, w * .55, h * .05, .012));
+  });
+  const piv = [.24, yb, 0], tf = p => add(piv, rotZ(sub(p, piv), 22));           // schuin leunend boek
+  P.jump(box([.02, yb, -.42], [.24, yb + 1.42, .42], tf)); P.jump(seg(tf([.02, yb + 1.15, .42]), tf([.24, yb + 1.15, .42])));
+  [[.62, 0, .16, .82, .7], [.66, .16, .13, .76, .64], [.6, .29, .14, .8, .68]].forEach(([x, y0, hh, ww, dd]) => {
+    P.jump(box([x, yb + y0, -dd / 2], [x + ww, yb + y0 + hh, dd / 2]));          // liggende stapel
+    P.jump(seg([x, yb + y0 + hh / 2, dd / 2], [x + ww, yb + y0 + hh / 2, dd / 2]));
+  });
+  return P;
+} };
+
+MODELS.lego = { name: 'Legostenen', tilt: [24, -30], build() {
+  const P = new Pen(), U2 = .4, H = .48;
+  const bricks = [
+    { c: [-.3, -1, 0], nx: 4, nz: 2, ry: 0 }, { c: [.1, -.52, 0], nx: 4, nz: 2, ry: 0 }, { c: [.1, -.04, 0], nx: 2, nz: 2, ry: 40 },
+    { c: [.1, .44, 0], nx: 2, nz: 1, ry: 40 }, { c: [.35, -1, 1.1], nx: 4, nz: 1, ry: -18 }, { c: [-1.35, -1, .8], nx: 2, nz: 2, ry: 28 },
+    { c: [-1.35, -.52, .8], nx: 2, nz: 1, ry: 28 }, { c: [1.35, -1, -.2], nx: 2, nz: 2, ry: -35 }];
+  const local = (b, p) => add(rotY([p[0] - b.nx * U2 / 2, p[1], p[2] - b.nz * U2 / 2], b.ry), b.c);
+  const inv = (b, q) => { const r = rotY(sub(q, b.c), -b.ry); return [r[0] + b.nx * U2 / 2, r[1], r[2] + b.nz * U2 / 2]; };
+  bricks.forEach(b => {
+    const w = b.nx * U2, dd = b.nz * U2;
+    P.jump(box([0, 0, 0], [w, H, dd], p => local(b, p)));
+    for (let i = 0; i < b.nx; i++) for (let j = 0; j < b.nz; j++) {
+      const sp = local(b, [(i + .5) * U2, H, (j + .5) * U2]);
+      const covered = bricks.some(o => o !== b && Math.abs(o.c[1] - (b.c[1] + H)) < .02 && (() => { const q = inv(o, sp); return q[0] > 0 && q[0] < o.nx * U2 && q[2] > 0 && q[2] < o.nz * U2; })());
+      if (covered) continue;
+      const base = arc(sp, X, Z, .12, 90, 450), topR = arc(add(sp, [0, .1, 0]), X, Z, .12, 90, 450);
+      P.jump(base); P.add(seg(base[base.length - 1], topR[0])); P.add(topR);
+    }
+  });
+  return P;
+} };
+
+MODELS.rubiks = { name: "Rubik's kubus", tilt: [26, -34], build() {
+  const P = new Pen(), s = .9, g = .04, cell = 2 * s / 3, angs = [-6, 7, 26];
+  for (let L = 0; L < 3; L++) {
+    const y0 = -s + L * cell + g / 2, y1 = -s + (L + 1) * cell - g / 2, tf = p => rotY(p, angs[L]), ym = (y0 + y1) / 2, sz = cell * .74, hh = (y1 - y0) * .76;
+    P.jump(box([-s, y0, -s], [s, y1, s], tf));
+    [[Z, X], [X, [0, 0, -1]], [[0, 0, -1], [-1, 0, 0]], [[-1, 0, 0], Z]].forEach(([n, u]) => {
+      for (let j = -1; j <= 1; j++) { const c = add(mul(n, s + .003), mul(u, j * cell)); c[1] = ym; P.jump(rrect(c, u, Y, sz, hh, .05).map(tf)); }
+    });
+    if (L === 2) for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) P.jump(rrect([i * cell, y1 + .003, j * cell], X, Z, sz, sz, .05).map(tf));
+    if (L === 0) for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) P.jump(rrect([i * cell, y0 - .003, j * cell], X, Z, sz, sz, .05).map(tf));
+  }
+  return P;
+} };
+
+MODELS.taart = { name: 'Taart', tilt: [24, -16], build() {
+  const P = new Pen();
+  const tier = (r, y0, y1) => {
+    const nb = Math.round(r * 46), beads = []; for (let k = 0; k <= nb * 40; k++) { const t = k / (nb * 40) * 2 * Math.PI, a = t * nb, rr = r + .03 + .028 * Math.cos(a); beads.push([rr * Math.cos(t), y0 + .03 + .028 * Math.sin(a), rr * Math.sin(t)]); }
+    P.jump(beads);                                                              // parelrand
+    P.add(seg([r, y0 + .06, 0], [r, y1 - .07, 0]));
+    const drip = []; for (let k = 0; k <= 900; k++) { const t = k / 900 * 2 * Math.PI, dd = .1 * Math.pow(Math.max(0, Math.sin(t * 7)), 4) + .04 * Math.pow(Math.max(0, Math.sin(t * 11 + 1)), 6); drip.push([r * Math.cos(t), y1 - .07 - dd, r * Math.sin(t)]); }
+    P.add(drip);                                                                // druipende slagroom
+    P.add(seg([r, y1 - .07, 0], [r, y1, 0])); P.add(ring(y1, r, 0));
+    [120, 240].forEach(a => P.jump(seg(at(a, y0 + .06, r), at(a, y1 - .09, r))));
+  };
+  tier(.95, -.8, -.3); tier(.58, -.3, .12);
+  [90, 210, 330].forEach(a => {                                                 // kaarsjes met vlammetjes
+    const b = at(a, .12, .3), tp = add(b, [0, .32, 0]), fl = add(tp, [0, .06, 0]), f2 = add(fl, [0, .22, 0]);
+    P.jump(arc(b, X, Z, .045, 0, 360)); P.add(coil(b, tp, .045, 3)); P.add(arc(tp, X, Z, .045, 0, 360));
+    P.add(seg(tp, fl));
+    P.add(bez(fl, add(fl, [.07, .05, 0]), add(fl, [.03, .17, 0]), f2)); P.add(bez(f2, add(fl, [-.03, .17, 0]), add(fl, [-.07, .05, 0]), fl));
+    P.add(bez(fl, add(fl, [0, .05, .07]), add(fl, [0, .17, .03]), f2)); P.add(bez(f2, add(fl, [0, .17, -.03]), add(fl, [0, .05, -.07]), fl));
+  });
+  const pc = [.2, -.8, 1.35];                                                  // bordje met een taartpunt
+  P.jump(arc(pc, X, Z, .46, 0, 360)); P.add(arc(add(pc, [0, .03, 0]), X, Z, .38, 0, 360));
+  const wtf = p => add(rotY(p, -115), add(pc, [-.12, .035, .08]));
+  const aT = arc([0, .4, 0], X, Z, .58, -24, 24), aB = arc([0, 0, 0], X, Z, .58, -24, 24), aM = arc([0, .2, 0], X, Z, .58, -24, 24);
+  P.jump(poly([[0, .4, 0], aT[0]]).map(wtf)); P.add(aT.map(wtf)); P.add(poly([aT[aT.length - 1], [0, .4, 0], [0, 0, 0], aB[0]]).map(wtf)); P.add(aB.map(wtf)); P.add(seg(aB[aB.length - 1], [0, 0, 0]).map(wtf));
+  P.jump(seg(aB[0], aT[0]).map(wtf)); P.jump(seg(aB[aB.length - 1], aT[aT.length - 1]).map(wtf));
+  P.jump(poly([[0, .2, 0], aM[0]]).map(wtf)); P.add(aM.map(wtf)); P.add(seg(aM[aM.length - 1], [0, .2, 0]).map(wtf));
+  P.jump(ball(wtf([.4, .47, 0]), .06, 4));                                     // kersje
+  return P;
+} };
+
+MODELS.sleutel = { name: 'Steeksleutel', tilt: [32, -24], build() {
+  const P = new Pen(), z = .05, hc = [.8, 0], hr = .3, rc = [-.8, 0], rr = .27, tilt = 15;
+  const joinA = Math.asin(.1 / hr) / D, rj = Math.asin(.085 / rr) / D;
+  const dir = [Math.cos(tilt * D), Math.sin(tilt * D)], nrm = [-dir[1], dir[0]];
+  const jp = (along, side) => [hc[0] + dir[0] * along + nrm[0] * side, hc[1] + dir[1] * along + nrm[1] * side];
+  const o = [[rc[0] + rr * Math.cos(rj * D), .085], [hc[0] - hr * Math.cos(joinA * D), .1]];
+  for (let a = 180 - joinA; a > tilt + 40; a -= 4) o.push([hc[0] + hr * Math.cos(a * D), hr * Math.sin(a * D)]);
+  o.push([hc[0] + hr * Math.cos((tilt + 40) * D), hr * Math.sin((tilt + 40) * D)], jp(.08, .115), jp(-.04, .11), jp(-.09, 0), jp(-.04, -.11), jp(.08, -.115), [hc[0] + hr * Math.cos((tilt - 40) * D), hr * Math.sin((tilt - 40) * D)]);
+  for (let a = tilt - 40; a > -180 + joinA; a -= 4) o.push([hc[0] + hr * Math.cos(a * D), hr * Math.sin(a * D)]);
+  o.push([hc[0] - hr * Math.cos(joinA * D), -.1], [rc[0] + rr * Math.cos(rj * D), -.085]);
+  for (let a = -rj; a > -360 + rj; a -= 4) o.push([rc[0] + rr * Math.cos(a * D), rr * Math.sin(a * D)]);
+  o.push(o[0]);
+  const f = poly(o.map(p => [p[0], p[1], z])), b = poly(o.map(p => [p[0], p[1], -z]));
+  P.add(f); P.add(seg(f[f.length - 1], b[b.length - 1])); P.add(b.slice().reverse());
+  const star = zz => { const s = []; for (let k = 0; k <= 24; k++) { const a = k * 15 * D, r = k % 2 ? .13 : .165; s.push([rc[0] + r * Math.cos(a), r * Math.sin(a), zz]); } return poly(s); };
+  P.jump(star(z)); P.jump(star(-z));                                            // ringkant met 12 punten
+  P.jump(rrect([-.05, 0, z + .002], X, Y, .82, .075, .035));                   // groef in de steel
+  [jp(.08, .115), jp(.08, -.115), [rc[0] - rr, 0], [hc[0], hr], [hc[0], -hr]].forEach(p => P.jump(seg([p[0], p[1], z], [p[0], p[1], -z])));
+  return P;
+} };
+
+MODELS.weegschaal = { name: 'Weegschaal', tilt: [12, -22], build() {
+  const P = new Pen(), by = .64;
+  // getrapte voet met een koepeltje
+  P.add(ring(-1, .56, 90)); P.add(seg(at(90, -1, .56), at(90, -.95, .56))); P.add(ring(-.95, .56, 90));
+  P.add(seg(at(90, -.95, .56), at(90, -.95, .44))); P.add(ring(-.95, .44, 90)); P.add(seg(at(90, -.95, .44), at(90, -.9, .44))); P.add(ring(-.9, .44, 90));
+  for (let k = 0; k < 4; k++) { const a = 90 + k * 90; const m = []; for (let j = 0; j <= 30; j++) { const u = j / 30; m.push(at(a, -.9 + .08 * Math.sin(u * Math.PI / 2), .44 * (1 - u) + .05 * u)); } P.jump(m); }
+  // zuil: drie staven met sierringen
+  [0, 120, 240].forEach(a => P.jump(seg(at(a, -.83, .04), at(a, .62, .04))));
+  [-.6, -.1, .42].forEach(y => { P.jump(ring(y + .025, .075, 90)); P.add(seg(at(90, y + .025, .075), at(90, y - .025, .075))); P.add(ring(y - .025, .075, 90)); });
+  P.jump(seg([0, .62, 0], [0, .63, 0]));
+  P.add(ball([0, .7, 0], .07, 4)); P.add(seg([0, .77, 0], [0, .86, 0])); P.add(ball([0, .89, 0], .028, 3));
+  const beam = s => { const o = []; for (let k = 0; k <= 80; k++) { const x = -1 + 2 * k / 80; o.push([x, by + .06 * (1 - x * x) + s, 0]); } return o; };
+  P.jump(beam(.022)); P.add(arc([1.04, by + .0, 0], X, Y, .042, 120, -200)); P.add(beam(-.022).reverse()); P.add(arc([-1.04, by, 0], X, Y, .042, -60, 260)); // gebogen balk met krullen
+  [-.95, .95].forEach(x => {
+    const hp = [x, by - .03, 0], pc = [x, -.25, 0], r = .34;
+    [90, 210, 330].forEach(a => chain(hp, add(pc, [r * Math.cos(a * D), 0, r * Math.sin(a * D)]), 6, .05).forEach(l => P.jump(l)));
+    P.jump(arc(pc, X, Z, r, 90, 450));                                          // schaal: rand, bodem en vier lijnen
+    for (let k = 0; k < 4; k++) { const a = 90 + k * 90, m = []; for (let j = 0; j <= 30; j++) { const u = j / 30; m.push(add(pc, at(a, -.13 * Math.sin(u * Math.PI / 2), r * (1 - u) + .1 * u))); } if (k % 2 === 0) { P.add(m); P.add(arc(add(pc, [0, -.13, 0]), X, Z, .1, a, a + 90)); } else { P.add(m.slice().reverse()); P.add(arc(pc, X, Z, r, a, a + 90)); } }
+  });
   return P;
 } };
 
@@ -393,7 +459,7 @@ function build(name, detail) {
   const key = name + ':' + detail;
   if (shapeCache.has(key)) return shapeCache.get(key);
   const m = MODELS[name]; if (!m) return null;
-  const pen = m.build(detail || 5);
+  const raw = m.build(detail || 5), pen = smoothRuns(raw.p, raw.v, .012, 6);
   let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
   pen.p.forEach(p => { for (let a = 0; a < 3; a++) { mn[a] = Math.min(mn[a], p[a]); mx[a] = Math.max(mx[a], p[a]); } });
   const c = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
@@ -421,7 +487,10 @@ function libraryFor(file) {
   return LIBRARY[base] || { relief: 2.2 };
 }
 
-G.OLP3D_MODELS = { MODELS, build, libraryFor };
+const RELIEF = { 'wandelaar': .8, 'gesprek': .7, 'gesprek4': .7, 'twijfeltafel': .7, 'autonomie': .75, 'bed': .7, 'handa': .8, 'twee-handen': .75, 'vuist': .85, 'dimensies-nolan': .6 };
+const baseName = file => String(file || '').toLowerCase().replace(/\.svg$/, '').replace(/(-\d+)+$/, '');
+const reliefDepth = file => RELIEF[baseName(file)] || 0;
+G.OLP3D_MODELS = { MODELS, build, libraryFor, reliefDepth };
 // Kleine voorvertoning (SVG-pad, pen omhoog = nieuw stuk) voor knoppen en miniaturen.
 G.OLP3D_MODELS.preview = function (name, detail, tx, ty, size) {
   const m = build(name, detail || 5); if (!m) return '';
