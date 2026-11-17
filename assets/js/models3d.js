@@ -367,16 +367,21 @@ MODELS.lego = { name: 'Legostenen', tilt: [24, -30], build() {
   return P;
 } };
 
+// Rustig gehouden: alleen de zichtbare kant (voor, rechts, boven) krijgt vakjes,
+// en de achterste ribben vallen weg. De lagen staan iets verdraaid ten opzichte van elkaar.
 MODELS.rubiks = { name: "Rubik's kubus", tilt: [26, -34], build() {
-  const P = new Pen(), s = .9, g = .04, cell = 2 * s / 3, angs = [-6, 7, 26];
+  const P = new Pen(), s = .9, g = .05, cell = 2 * s / 3, angs = [-5, 6, 22];
   for (let L = 0; L < 3; L++) {
-    const y0 = -s + L * cell + g / 2, y1 = -s + (L + 1) * cell - g / 2, tf = p => rotY(p, angs[L]), ym = (y0 + y1) / 2, sz = cell * .74, hh = (y1 - y0) * .76;
-    P.jump(box([-s, y0, -s], [s, y1, s], tf));
-    [[Z, X], [X, [0, 0, -1]], [[0, 0, -1], [-1, 0, 0]], [[-1, 0, 0], Z]].forEach(([n, u]) => {
-      for (let j = -1; j <= 1; j++) { const c = add(mul(n, s + .003), mul(u, j * cell)); c[1] = ym; P.jump(rrect(c, u, Y, sz, hh, .05).map(tf)); }
+    const y0 = -s + L * cell + g / 2, y1 = -s + (L + 1) * cell - g / 2, tf = p => rotY(p, angs[L]), ym = (y0 + y1) / 2, sz = cell * .7, hh = (y1 - y0) * .7;
+    const c = (x, y, z) => tf([x, y, z]);
+    // omtrek van de laag: bovenrand voor, rib rechtsachter, onderrand voor, rib linksvoor
+    P.jump(poly([c(-s, y1, s), c(s, y1, s), c(s, y1, -s), c(s, y0, -s), c(s, y0, s), c(-s, y0, s), c(-s, y1, s)]));
+    P.jump(poly([c(s, y1, s), c(s, y0, s)]));                                   // voorste rib
+    if (L === 2) P.jump(poly([c(-s, y1, s), c(-s, y1, -s), c(s, y1, -s)]));       // bovenvlak helemaal
+    [[Z, X], [X, [0, 0, -1]]].forEach(([n, u]) => {
+      for (let j = -1; j <= 1; j++) { const m = add(mul(n, s + .003), mul(u, j * cell)); m[1] = ym; P.jump(rrect(m, u, Y, sz, hh, .06).map(tf)); }
     });
-    if (L === 2) for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) P.jump(rrect([i * cell, y1 + .003, j * cell], X, Z, sz, sz, .05).map(tf));
-    if (L === 0) for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) P.jump(rrect([i * cell, y0 - .003, j * cell], X, Z, sz, sz, .05).map(tf));
+    if (L === 2) for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) P.jump(rrect([i * cell, y1 + .003, j * cell], X, Z, sz, sz, .06).map(tf));
   }
   return P;
 } };

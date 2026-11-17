@@ -1630,6 +1630,13 @@ const PLAYER_CSS = `
 .olp-media-el{position:absolute;left:0;top:0;transform-origin:0 0;border:0;background:#000;pointer-events:auto;opacity:0}
 .olp-media video.olp-media-el{object-fit:contain;cursor:pointer}
 .olp-media-el iframe{width:100%;height:100%;border:0;display:block}
+.olp-vbar{position:absolute;display:none;align-items:center;gap:10px;padding:7px 12px;border-radius:12px;background:rgba(15,12,30,.72);backdrop-filter:blur(8px);color:#fff;font-size:13px;z-index:6;box-sizing:border-box}
+.olp-vbar.show{display:flex}
+.olp-vbar button{all:unset;cursor:pointer;width:30px;height:30px;flex:none;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.16);color:#fff}
+.olp-vbar button:hover{background:rgba(255,94,184,.65)}
+.olp-vbar input{flex:1;min-width:60px;accent-color:#ff5eb8;cursor:pointer}
+.olp-vbar span{font-variant-numeric:tabular-nums;opacity:.85;white-space:nowrap}
+.olp-player.hide-cursor .olp-vbar{cursor:default}
 `;
 let cssInjected = false;
 function injectPlayerCSS() { if (cssInjected) return; cssInjected = true; const s = document.createElement('style'); s.textContent = PLAYER_CSS; document.head.appendChild(s); }
@@ -1718,9 +1725,9 @@ class Player {
     const on = (t, ev, fn, o) => { t.addEventListener(ev, fn, o); this.handlers.push([t, ev, fn, o]); };
     on(window, 'resize', () => this.onResize());
     on(document, 'keydown', e => this.onKey(e), true);
-    on(this.el, 'mousemove', e => { this.mouse.x = e.clientX / innerWidth * 2 - 1; this.mouse.y = e.clientY / innerHeight * 2 - 1; this.wake(); });
+    on(this.el, 'mousemove', e => { this.mouse.x = e.clientX / innerWidth * 2 - 1; this.mouse.y = e.clientY / innerHeight * 2 - 1; this.mouseT = performance.now(); this.wake(); });
     let down = null;
-    on(this.el, 'pointerdown', e => { if (e.target.closest('.olp-bar,.olp-media-el')) return; down = { x: e.clientX, y: e.clientY, yaw: this.user.yaw, pitch: this.user.pitch, moved: false, t: performance.now() }; this.dragging = false; });
+    on(this.el, 'pointerdown', e => { if (e.target.closest('.olp-bar,.olp-media-el,.olp-vbar')) return; down = { x: e.clientX, y: e.clientY, yaw: this.user.yaw, pitch: this.user.pitch, moved: false, t: performance.now() }; this.dragging = false; });
     on(window, 'pointermove', e => {
       if (!down) return;
       const dx = e.clientX - down.x, dy = e.clientY - down.y;
@@ -1834,6 +1841,7 @@ class Player {
   travelDuration(ph) { const k = 1.6 * Math.pow(1.15, this.doc.settings.travelSpeed - 5); return clamp(ph.len / (this.penSpeed() * k), 1.2, 7); }
   startDraw(i) {
     const ph = this.phaseOf(i, 'draw'); if (!ph) return;
+    this.resetVideos(i);
     this.cur = i; this.counter();
     this.anim = { kind: 'draw', i, s0: ph.s0, s1: ph.s1, dur: this.drawDuration(ph), t: 0 };
     this.state = 'drawing'; this.user.yaw = this.user.pitch = 0;
@@ -2135,6 +2143,7 @@ class Player {
     this.canvas.after(this.mediaLayer);
     this.videos = [];
     this.world.stationFx.forEach(fx => fx.videos.forEach(vd => this.videos.push(vd)));
+    if (this.videos.length) this.setupVideoBar();
   }
   pendingMedia(i) {
     const fx = this.world.stationFx[i]; if (!fx) return [];
@@ -2158,7 +2167,11 @@ class Player {
           playerVars: { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(segStart(it)), mute: it.muted ? 1 : 0 },
           events: {
             onReady: e => { vd.ytReady = true; if (vd.wantPlay) { this.resumeAt(vd); e.target.playVideo(); } },
-            onStateChange: e => { if (e.data === 0 && it.loop) { e.target.seekTo(segStart(it), true); e.target.playVideo(); } }
+            onStateChange: e => {
+              if (e.data === 1) { vd.playing = true; vd.started = true; } else if (e.data === 2 || e.data === 0) vd.playing = false;
+              if (e.data === 1 && this.offStage(vd)) e.target.pauseVideo();   // nooit op de achtergrond
+              if (e.data === 0 && it.loop) { e.target.seekTo(segStart(it), true); e.target.playVideo(); }
+            }
           }
         });
       }).catch(() => this.hint('YouTube kan niet geladen worden (internet nodig)', 3000));
@@ -2168,6 +2181,8 @@ class Player {
     v.playsInline = true; v.preload = 'auto'; v.muted = !!it.muted;
     if (it.kind === 'link') v.crossOrigin = 'anonymous';
     v.addEventListener('ended', () => { if (it.loop) { v.currentTime = segStart(it); v.play().catch(() => {}); } });
+    v.addEventListener('play', () => { vd.playing = true; vd.started = true; if (this.offStage(vd)) v.pause(); });
+    v.addEventListener('pause', () => { vd.playing = false; });
     v.addEventListener('error', () => {
       // link zonder CORS: dan als los element over de dia afspelen
       if (it.kind === 'link' && v.crossOrigin && !vd.retried) {
@@ -2186,12 +2201,14 @@ class Player {
     return vd.el ? vd.el.currentTime : null;
   }
   seekVideo(vd, t) {
+    vd.seekAt = performance.now(); vd.seekTarget = t;
     if (vd.it.kind === 'youtube') { if (vd.yt && vd.yt.seekTo) vd.yt.seekTo(t, true); }
     else if (vd.el) { try { vd.el.currentTime = t; } catch (e) {} }
   }
   // Waar moet de video (her)beginnen, gezien de gekozen stukjes?
   resumeAt(vd) {
     const segs = vd.it.segments || [], t = this.videoTime(vd);
+    if (vd.restart) { vd.restart = false; vd.segDone = false; this.seekVideo(vd, segStart(vd.it)); return; }
     if (!segs.length) { if (vd.el && vd.el.ended) this.seekVideo(vd, 0); return; }
     if (vd.segDone || t == null) { vd.segDone = false; this.seekVideo(vd, segs[0].s); return; }
     const i = segs.findIndex(sg => sg.e == null || t < sg.e - .08);
@@ -2204,7 +2221,7 @@ class Player {
     if (vd.it.kind === 'youtube') { if (vd.ytReady) { this.resumeAt(vd); vd.yt.playVideo(); } return; }
     const v = vd.el;
     if (vd.tex && !vd.overlay) { vd.m.map = vd.tex; vd.m.needsUpdate = true; }
-    const go = () => { this.resumeAt(vd); v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); };
+    const go = () => { if (!vd.wantPlay || this.exited) return; this.resumeAt(vd); v.play().catch(() => { if (!vd.wantPlay) return; v.muted = true; v.play().catch(() => {}); }); };
     if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
   }
   pauseVideo(vd) {
@@ -2212,8 +2229,22 @@ class Player {
     if (!vd.el) return;
     if (vd.it.kind === 'youtube') { if (vd.yt && vd.yt.pauseVideo) vd.yt.pauseVideo(); } else vd.el.pause();
   }
-  toggleVideo(vd) { if (vd.playing) this.pauseVideo(vd); else this.playVideo(vd); }
-  pauseAll() { (this.videos || []).forEach(vd => { if (vd.playing) this.pauseVideo(vd); vd.started = false; }); }
+  toggleVideo(vd) { if (vd.playing || this.isPlaying(vd)) this.pauseVideo(vd); else this.playVideo(vd); }
+  pauseAll() { (this.videos || []).forEach(vd => { this.pauseVideo(vd); vd.started = false; }); }
+  offStage(vd) { return this.exited || (vd.station !== this.cur && this.state !== 'overview'); }
+  isPlaying(vd) {
+    if (vd.it.kind === 'youtube') return !!(vd.yt && vd.yt.getPlayerState && [1, 3].includes(vd.yt.getPlayerState()));
+    return !!(vd.el && vd.el.tagName === 'VIDEO' && !vd.el.paused && !vd.el.ended);
+  }
+  // Terug op een dia: de video's daar beginnen weer vooraan (bij het eerste stukje).
+  resetVideos(i) {
+    const fx = this.world.stationFx[i]; if (!fx) return;
+    fx.videos.forEach(vd => {
+      this.pauseVideo(vd); vd.started = false; vd.segDone = false; vd.restart = true;
+      if (vd.it.kind !== 'youtube') { if (vd.el) this.seekVideo(vd, segStart(vd.it)); }
+      else if (vd.yt && vd.yt.getPlayerState && vd.yt.getPlayerState() === 2) this.seekVideo(vd, segStart(vd.it));
+    });
+  }
   toggleMedia() {
     const fx = this.world.stationFx[this.cur]; if (!fx) return;
     const vis = fx.videos.filter(vd => this.itemAlpha(this.cur, vd.it.id) > .5);
@@ -2230,12 +2261,15 @@ class Player {
   // Alleen de gekozen stukjes: aan het eind van een stukje door naar het
   // volgende; na het laatste stoppen (of opnieuw bij herhalen).
   watchSegments(vd) {
-    const segs = vd.it.segments; if (!segs || !segs.length || !vd.playing) return;
+    const segs = vd.it.segments; if (!segs || !segs.length || !this.isPlaying(vd)) return;
     const isYT = vd.it.kind === 'youtube';
-    if (isYT ? !(vd.yt && vd.yt.getPlayerState && vd.yt.getPlayerState() === 1) : (!vd.el || vd.el.paused)) return;
+    // na het laatste stukje toch weer op play gedrukt (bijv. in YouTube zelf): opnieuw vanaf het eerste stukje
+    if (vd.segDone) { if (performance.now() - (vd.segDoneT || 0) < 800) return; vd.segDone = false; this.seekVideo(vd, segs[0].s); return; }
     const t = this.videoTime(vd); if (t == null || !isFinite(t)) return;
+    // YouTube meldt na een sprong nog even de oude tijd: dan niet opnieuw ingrijpen
+    if (isYT && performance.now() - (vd.seekAt || 0) < 1500 && Math.abs(t - vd.seekTarget) > 1) return;
     const i = segs.findIndex(sg => sg.e == null || t < sg.e - .08);
-    if (i === -1) { if (vd.it.loop) this.seekVideo(vd, segs[0].s); else { this.pauseVideo(vd); vd.segDone = true; } return; }
+    if (i === -1) { if (vd.it.loop) this.seekVideo(vd, segs[0].s); else { this.pauseVideo(vd); vd.segDone = true; vd.segDoneT = performance.now(); } return; }
     if (t < segs[i].s - .3 && (i > 0 || !isYT || t > .5)) this.seekVideo(vd, segs[i].s);
   }
   updateMedia() {
@@ -2246,24 +2280,101 @@ class Player {
       const a = this.itemAlpha(vd.station, vd.it.id) * (fx.presence ?? 0);
       // automatisch starten zodra het kader af is en je bij de dia bent
       if (vd.it.autoplay && !vd.started && vd.station === this.cur && a > .6 && (this.state === 'idle' || this.state === 'drawing')) this.playVideo(vd);
-      if (vd.playing && vd.station !== this.cur && this.state !== 'overview') this.pauseVideo(vd);
+      if (vd.station !== this.cur && this.state !== 'overview' && this.isPlaying(vd)) this.pauseVideo(vd);
       this.watchSegments(vd);
       if (!vd.overlay || !vd.el) return;
-      const el = vd.el, it = vd.it;
+      const el = vd.el;
       if (a < .02) { el.style.opacity = '0'; el.style.visibility = 'hidden'; return; }
-      const S = w.stations[vd.station], rot = (it.rot || 0) * DEG, cx = it.x + it.w / 2, cy = it.y + it.h / 2;
-      const q = [];
-      for (const [px, py] of [[it.x, it.y], [it.x + it.w, it.y], [it.x + it.w, it.y + it.h], [it.x, it.y + it.h]]) {
-        const dx = px - cx, dy = py - cy, rx = cx + dx * Math.cos(rot) - dy * Math.sin(rot), ry = cy + dx * Math.sin(rot) + dy * Math.cos(rot);
-        const [lx, ly] = framePxToLocal(rx, ry);
-        const v = new THREE.Vector3(lx, ly, .04).applyMatrix4(S.m).project(cam);
-        if (v.z > 1 || v.z < -1) { el.style.visibility = 'hidden'; return; }
-        q.push(r.left - er.left + (v.x + 1) / 2 * r.width, r.top - er.top + (1 - v.y) / 2 * r.height);
-      }
+      const q = this.videoQuad(vd, r, er);
+      if (!q) { el.style.visibility = 'hidden'; return; }
       const W = parseFloat(el.style.width) || 960, H = parseFloat(el.style.height) || 540;
       el.style.transform = quadMatrix(W, H, q);
       el.style.visibility = 'visible'; el.style.opacity = String(a);
     });
+    this.updateVideoBar();
+  }
+  // Schermhoeken van een video (linksboven, rechtsboven, rechtsonder, linksonder)
+  videoQuad(vd, r, er) {
+    const w = this.world, cam = this.camera(), it = vd.it, S = w.stations[vd.station];
+    r = r || this.canvas.getBoundingClientRect(); er = er || this.el.getBoundingClientRect();
+    const rot = (it.rot || 0) * DEG, cx = it.x + it.w / 2, cy = it.y + it.h / 2, q = [];
+    for (const [px, py] of [[it.x, it.y], [it.x + it.w, it.y], [it.x + it.w, it.y + it.h], [it.x, it.y + it.h]]) {
+      const dx = px - cx, dy = py - cy, rx = cx + dx * Math.cos(rot) - dy * Math.sin(rot), ry = cy + dx * Math.sin(rot) + dy * Math.cos(rot);
+      const [lx, ly] = framePxToLocal(rx, ry);
+      const v = new THREE.Vector3(lx, ly, .04).applyMatrix4(S.m).project(cam);
+      if (v.z > 1 || v.z < -1) return null;
+      q.push(r.left - er.left + (v.x + 1) / 2 * r.width, r.top - er.top + (1 - v.y) / 2 * r.height);
+    }
+    return q;
+  }
+  videoDuration(vd) {
+    if (vd.it.kind === 'youtube') return vd.yt && vd.yt.getDuration ? vd.yt.getDuration() || 0 : 0;
+    return vd.el && vd.el.tagName === 'VIDEO' && isFinite(vd.el.duration) ? vd.el.duration : 0;
+  }
+  // De gekozen stukjes achter elkaar, als tijdlijn van de presentatie
+  keptList(vd) {
+    const dur = this.videoDuration(vd), sg = vd.it.segments;
+    const L = sg && sg.length ? sg.map(x => [x.s, x.e == null ? dur : (dur ? Math.min(x.e, dur) : x.e)]) : [[0, dur]];
+    return L.filter(([a, b]) => b > a);
+  }
+  toKept(L, t) { let acc = 0; for (const [a, b] of L) { if (t < a) return acc; if (t <= b) return acc + (t - a); acc += b - a; } return acc; }
+  toReal(L, k) { let acc = 0; for (const [a, b] of L) { if (k <= acc + (b - a)) return a + (k - acc); acc += b - a; } return L.length ? L[L.length - 1][1] : 0; }
+  // Afspeelbalk: verschijnt als je de muis beweegt en er een video in beeld is
+  setupVideoBar() {
+    const bar = this.vbar = document.createElement('div'); bar.className = 'olp-vbar';
+    bar.innerHTML = '<button title="Afspelen / pauzeren (K)"></button><input type="range" min="0" max="1000" value="0" tabindex="-1" aria-label="Spoelen"><span>0:00 / 0:00</span>';
+    this.el.appendChild(bar);
+    const [btn, rng, lab] = bar.children; this.vbBtn = btn; this.vbRange = rng; this.vbLabel = lab;
+    ['pointerdown', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu'].forEach(ev => bar.addEventListener(ev, e => e.stopPropagation()));
+    btn.addEventListener('click', () => { if (this.vbVd) this.toggleVideo(this.vbVd); btn.blur(); });
+    btn.tabIndex = -1;
+    const seek = () => {
+      const vd = this.vbVd; if (!vd) return;
+      this.ensureVideo(vd);
+      const L = this.keptList(vd), total = L.reduce((n, [a, b]) => n + b - a, 0); if (!total) return;
+      vd.segDone = false; vd.started = true;
+      if (vd.tex && !vd.overlay) { vd.m.map = vd.tex; vd.m.needsUpdate = true; }
+      this.seekVideo(vd, this.toReal(L, rng.value / 1000 * total));
+    };
+    rng.addEventListener('pointerdown', () => { this.vbDrag = true; });
+    rng.addEventListener('input', seek);
+    const end = () => { this.vbDrag = false; rng.blur(); };
+    rng.addEventListener('change', end); rng.addEventListener('pointerup', end);
+    // pijltjes en spatie blijven de presentatie bedienen, nooit de balk
+    rng.addEventListener('keydown', e => e.preventDefault());
+    bar.addEventListener('mouseenter', () => { this.vbHover = true; });
+    bar.addEventListener('mouseleave', () => { this.vbHover = false; });
+  }
+  updateVideoBar() {
+    const bar = this.vbar; if (!bar) return;
+    const recent = performance.now() - (this.mouseT || 0) < 2600 || this.vbHover || this.vbDrag;
+    let vd = null;
+    if (recent && !this.opts.record && this.state !== 'overview') {
+      const fx = this.world.stationFx[this.cur];
+      if (fx) vd = fx.videos.find(v => v.src && this.itemAlpha(this.cur, v.it.id) * (fx.presence ?? 0) > .5) || null;
+    }
+    if (!vd) { this.vbVd = null; bar.classList.remove('show'); return; }
+    this.vbVd = vd;
+    if (!vd.el) this.ensureVideo(vd);   // laadt alvast, voor de lengte van de video
+    const q = this.videoQuad(vd); if (!q) { bar.classList.remove('show'); return; }
+    const xs = [q[0], q[2], q[4], q[6]], ys = [q[1], q[3], q[5], q[7]];
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y1 = Math.max(...ys);
+    const bw = clamp(x1 - x0 - 24, 260, this.el.clientWidth - 24);
+    bar.style.width = bw + 'px';
+    bar.style.left = clamp((x0 + x1) / 2 - bw / 2, 12, this.el.clientWidth - bw - 12) + 'px';
+    bar.style.top = clamp(y1 - 56, 12, this.el.clientHeight - 64) + 'px';
+    bar.classList.add('show');
+    const pl = this.isPlaying(vd) || !!vd.wantPlay;
+    if (this.vbBtn.dataset.pl !== String(pl)) {
+      this.vbBtn.dataset.pl = String(pl);
+      this.vbBtn.innerHTML = pl ? '<svg viewBox="0 0 12 12" width="12" height="12"><rect x="2" y="1.5" width="2.6" height="9" rx=".8" fill="currentColor"/><rect x="7.4" y="1.5" width="2.6" height="9" rx=".8" fill="currentColor"/></svg>'
+        : '<svg viewBox="0 0 12 12" width="12" height="12"><path d="M3.2 1.6v8.8c0 .5.5.8.9.5l6.6-4.4c.4-.2.4-.8 0-1L4.1 1.1c-.4-.3-.9 0-.9.5z" fill="currentColor"/></svg>';
+    }
+    const L = this.keptList(vd), total = L.reduce((n, [a, b]) => n + b - a, 0);
+    const t = this.videoTime(vd), k = this.toKept(L, t == null ? segStart(vd.it) : t);
+    if (!this.vbDrag && total) this.vbRange.value = String(Math.round(k / total * 1000));
+    const ft = x => { x = Math.max(0, x || 0); const m = Math.floor(x / 60), sec = Math.floor(x - m * 60); return m + ':' + (sec < 10 ? '0' : '') + sec; };
+    this.vbLabel.textContent = ft(k) + ' / ' + ft(total);
   }
   disposeMedia() {
     (this.videos || []).forEach(vd => {

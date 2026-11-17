@@ -11,7 +11,7 @@
 ╚══════════════════════════════════════════════════════════╝
 ```
 
-![Version](https://img.shields.io/badge/VERSION-1.3.0-FF5EB8?style=for-the-badge&labelColor=2A1458)
+![Version](https://img.shields.io/badge/VERSION-1.3.1-FF5EB8?style=for-the-badge&labelColor=2A1458)
 ![3D](https://img.shields.io/badge/THREE.JS-r180-68E3D6?style=for-the-badge&labelColor=2A1458)
 ![Electron](https://img.shields.io/badge/ELECTRON-40-FFF38C?style=for-the-badge&labelColor=2A1458)
 ![Broer](https://img.shields.io/badge/BROER%20VAN-ONE%20LINE%20PREZI-C9B0F7?style=for-the-badge&labelColor=2A1458)
@@ -62,6 +62,7 @@ gewoon openen: ze worden automatisch omgezet naar 3D.
 | **Dia's die pas verschijnen bij aankomst** | Onderweg zie je alleen de lijn; de kaart van een dia verschijnt zacht als de camera aankomt. Het kader kan ook *alleen een rand* of *onzichtbaar* zijn. |
 | **Video en afbeelding** | De pen tekent eerst een kader, daarna verschijnt de afbeelding of start de video. Video als bestand, via een link (Dropbox, OneDrive, Google Drive…) of YouTube, met automatisch starten, geluid en herhalen. |
 | **Video-editor** | Klik bij een video op *✂ Afspelen en stukjes kiezen* (of dubbelklik op de video). Speel de video af, markeer een stuk met `I` en `O` (of de knoppen *[ Begin hier* en *Einde hier ]*) en kies *laten zien* of *weghalen*. Op de tijdlijn sleep je de randen van een stukje bij. In de presentatie speelt de video alleen de gekozen stukjes, achter elkaar. Stukjes uit de 2D-app komen mee. |
+| **Afspeelbalk** | Beweeg in de presentatie de muis: onder de video verschijnt een balk met play/pauze en een schuif om door de gekozen stukjes te spoelen. De pijltjestoetsen blijven gewoon de dia's bedienen. Ga je verder, dan stopt de video (ook het geluid); kom je terug op de dia, dan begint hij weer vooraan. |
 | **3D-vormen uit één lijn** | Bol, hart, knoop, veer, DNA, kubus (Hilbert-kromme), Lissajous, wervelwind, zandloper en heuvels — wiskundig allemaal één doorlopende lijn. |
 | **Tekeningen buigen** | Leg een 2D-tekening bol, laat hem golven, vouw hem om een cilinder, draai hem of zet elk pad op een eigen diepte (lagen). |
 | **Lijnreizen** | De lijn tussen twee dia's kan vloeiend gaan, een looping maken, als kurkentrekker draaien, golven of recht gaan. |
