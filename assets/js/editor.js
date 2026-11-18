@@ -1131,7 +1131,7 @@ function panelItem(p) {
     p.appendChild(sec('3D-tekening', grid,
       row('Voorover', slider(it.tiltX, -90, 90, 1, v => { it.tiltX = v; ch(); })),
       row('Draaien', slider(it.tiltY, -180, 180, 1, v => { it.tiltY = v; ch(); })),
-      it.model === 'boom' || it.model === 'appel' || it.model === 'herstel' || it.model === 'zandloper' ? row('Detail', slider(it.detail, 1, 10, 1, v => { it.detail = v; ch(); })) : null,
+      it.model === 'boom' || it.model === 'boomkaal' || it.model === 'appel' || it.model === 'herstel' || it.model === 'zandloper' ? row('Detail', slider(it.detail, 1, 10, 1, v => { it.detail = v; ch(); })) : null,
       row('Kleur', colorCtl(it.color, s.lineColor || th.line, v => { it.color = v; ch(); })),
       h('p', { class: 'note' }, 'Een echte 3D-tekening uit één doorlopende lijn. Met “Rondje om tekening” (tabblad Dia) draait de camera er tijdens het presenteren omheen.')));
   } else if (it.type === 'video') {
@@ -1290,7 +1290,7 @@ function demoDoc() {
     { title: 'Bouwen', lineColor: '#ff5eb8', motion: 'rondje', link: 'golf', items: [model('rubiks', 200, 160, 700), model('lego', 1020, 160, 700), txt('Bouwen, stapelen en draaien', 975, 62)] },
     { title: 'Tekst als lijn', lineColor: '#7ff3e1', items: [olt('Tekst als lijn', 470, 300, { deform: 'cilinder', depth: 1 }), txt('handgeschreven — en gebogen in de ruimte', 840, 64, { italic: true })] },
     { title: 'Mensen', lineColor: '#ffd166', tint: '#1d1650', items: [lib('gesprek.svg', { deform: 'relief', depth: .7 }), txt('Figuren met een subtiel reliëf', 975, 62)] },
-    { title: 'Loslaten', lineColor: '#9cffb8', tint: '#0f2a2c', motion: 'rondje', link: 'lus', items: [model('boom', 580, 70, 760), txt('Loslaten', 985, 70, { italic: true })] },
+    { title: 'Loslaten', lineColor: '#9cffb8', tint: '#0f2a2c', motion: 'rondje', link: 'lus', items: [model('boomkaal', 560, 60, 800), txt('Loslaten', 985, 70, { italic: true })] },
     { title: 'Balans', lineColor: '#fff38c', motion: 'rondje', items: [model('weegschaal', 590, 80, 740), txt('Alles in balans', 985, 64)] },
     { title: 'Jouw verhaal', lineColor: '#ff5eb8', items: [olt('Jouw verhaal', 470, 320), txt('Druk op O voor het hele kunstwerk', 840, 60, { italic: true })] }
   ].map(sl => Object.assign(sl, { items: sl.items.filter(Boolean) }));
