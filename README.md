@@ -11,7 +11,7 @@
 ╚══════════════════════════════════════════════════════════╝
 ```
 
-![Version](https://img.shields.io/badge/VERSION-1.4.0-FF5EB8?style=for-the-badge&labelColor=2A1458)
+![Version](https://img.shields.io/badge/VERSION-1.5.0-FF5EB8?style=for-the-badge&labelColor=2A1458)
 ![3D](https://img.shields.io/badge/THREE.JS-r180-68E3D6?style=for-the-badge&labelColor=2A1458)
 ![Electron](https://img.shields.io/badge/ELECTRON-40-FFF38C?style=for-the-badge&labelColor=2A1458)
 ![Broer](https://img.shields.io/badge/BROER%20VAN-ONE%20LINE%20PREZI-C9B0F7?style=for-the-badge&labelColor=2A1458)
@@ -56,8 +56,9 @@ gewoon openen: ze worden automatisch omgezet naar 3D.
 
 | | |
 |:---|:---|
-| **3D-tekeningen** | Echte 3D-lijntekeningen met zacht afgeronde hoeken: kompas, zandloper (met gedraaide palen), wegwijzer, anker (met ketting en touw), appel, open boek, boekenplank, kale boom met vallend blad, boom met volle kruin, weegschaal, Rubik's kubus met verschoven lagen, legostenen, taart met kaarsjes, steeksleutel, vraagteken en diamant. Plus figuren uit de bibliotheek (mensen, handen) met een subtiel reliëf. Alles wat 3D is staat bij *Toevoegen → 3D-tekening, figuur of vorm*; de bibliotheek zelf bevat de platte 2D-tekeningen. |
-| **Showcase** | De app opent met een presentatie die laat zien wat er kan. Je vorige werk staat klaar via *Ga verder met mijn werk* (of *Bestand → Vorige sessie terugzetten*). |
+| **3D-tekeningen** | Echte 3D-lijntekeningen met zacht afgeronde hoeken: kompas, zandloper (met gedraaide palen), wegwijzer, anker (met ketting en touw), appel, open boek, boekenplank, kale boom met vallend blad, boom met volle kruin, weegschaal, Rubik's kubus met verschoven lagen, legostenen, taart met kaarsjes, steeksleutel, vraagteken en diamant. Plus figuren uit de bibliotheek (mensen, handen) met een subtiel reliëf. Alles wat 3D is staat bij *Toevoegen → 3D-tekening, figuur of vorm*, ingedeeld per thema; de bibliotheek zelf bevat de platte 2D-tekeningen. |
+| **Geestelijke verzorging** | Concrete voorwerpen per thema. *Verlies en rouw:* kaars, lege stoel, fotolijst, vaas met tulpen, steenmannetje, brief in envelop, papieren bootje. *Nabijheid en gesprek:* doos tissues, kopje koffie, bankje. *Ethiek en keuzes:* twee puzzelstukjes, bril, deur op een kier, brug, handspiegel. *Zingeving en hoop:* lantaarn, rugzak, plantje in een potje, gelijmde kom (kintsugi). En persoonlijke figuren in reliëf, getekend in één doorgetrokken lijn: troost, hand in hand, verdriet, omhelzing, samen op een bankje, aan het bed, moreel beraad, handen met een lichtje en handen met een plantje. |
+| **Showcase** | De app opent met een presentatie die laat zien wat er kan (in de ruimte zonder sterren, met gekleurde lijnen, zacht neon en zonder kader). Je vorige werk staat klaar via *Ga verder met mijn werk* (of *Bestand → Vorige sessie terugzetten*). |
 | **Volgorde** | Versleep dia's in de lijst (of gebruik ↑ ↓): de presentatie volgt de nieuwe volgorde en de dia's wisselen van plek op dezelfde route door de ruimte. |
 | **Dia's die pas verschijnen bij aankomst** | Onderweg zie je alleen de lijn; de kaart van een dia verschijnt zacht als de camera aankomt. Het kader kan ook *alleen een rand* of *onzichtbaar* zijn. |
 | **Video en afbeelding** | De pen tekent eerst een kader, daarna verschijnt de afbeelding of start de video. Video als bestand, via een link (Dropbox, OneDrive, Google Drive…) of YouTube, met automatisch starten, geluid en herhalen. |
@@ -203,6 +204,7 @@ De editor heeft twee weergaven (wissel met **Tab**):
 | `assets/svglibrary.js`, `assets/onelinefont.js` | Bibliotheek en one-line-font, overgenomen uit One Line Prezi |
 | `assets/vendor/three.min.js` | Three.js als los script (`npm run build:three` maakt hem opnieuw) |
 | `tools/serve.js` | Kleine webserver om in de browser te testen |
+| `tools/generate-reliefs.js` | Tekent de reliëffiguren (één doorgetrokken lijn) en schrijft `assets/js/reliefs3d.js` |
 
 <div align="center">
 

@@ -1,6 +1,6 @@
 {
   "name": "3d-one-line-prezi",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "3D One Line Prezi — één doorlopende lijn reist door de ruimte van tekening naar tekening",
   "main": "main.js",
   "scripts": {
