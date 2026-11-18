@@ -15,6 +15,7 @@ const unit = a => mul(a, 1 / (len(a) || 1));
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 const X = [1, 0, 0], Y = [0, 1, 0], Z = [0, 0, 1];
+const clampN = (v, a, b) => Math.max(a, Math.min(b, +v || 5));
 function rnd(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 // draai punt p om eenheidsas k over hoek a (Rodrigues)
 function rotAxis(p, k, a) { const c = Math.cos(a), s = Math.sin(a), d = p[0] * k[0] + p[1] * k[1] + p[2] * k[2], cr = cross(k, p); return [p[0] * c + cr[0] * s + k[0] * d * (1 - c), p[1] * c + cr[1] * s + k[1] * d * (1 - c), p[2] * c + cr[2] * s + k[2] * d * (1 - c)]; }
@@ -167,36 +168,68 @@ MODELS.appel = { name: 'Appel', tilt: [14, -20], build(d) {
   return P;
 } };
 
+// Rustig maar niet kaal: een stam met drie hoofdtakken die in een wolkvormige
+// kruin verdwijnen. De kruin golft in de diepte, met binnenin een paar
+// bladerpartijen; aan de rand hangen blaadjes en een paar dwarrelen omlaag.
+// "Detail" geeft alleen meer blaadjes; de vorm van de boom blijft gelijk.
 MODELS.boom = { name: 'Boom met vallend blad', tilt: [6, -20], build(d) {
-  const P = new Pen(), R = rnd(11 + d), depth = d >= 7 ? 5 : 4;
-  P.add(arc([0, -1, 0], X, Z, .55, 200, 560));                                // grond
-  const leaf = (c, s, a) => { const t = [Math.cos(a) * s, Math.sin(a) * s * .5, Math.sin(a * 1.7) * s * .6], n = [-t[1] * .5, t[0] * .5, .1]; return poly([sub(c, t), add(c, n), add(c, t), sub(c, n), sub(c, t), add(c, t)]); };
-  const branch = (base, dir, L, w, lvl) => {
-    const tip = add(base, mul(dir, L));
-    let side = cross(dir, Z); if (len(side) < .2) side = cross(dir, X); side = unit(side);
-    const bend = mul(cross(dir, side), (R() - .5) * L * .25);
-    P.add(bez(add(base, mul(side, w)), add(add(base, mul(dir, L * .35)), add(mul(side, w * .9), bend)), add(add(base, mul(dir, L * .7)), add(mul(side, w * .75), bend)), add(tip, mul(side, w * .6))));
-    if (lvl > 0) {
-      const n = lvl >= depth - 1 ? 3 : 2 + (R() < .4 ? 1 : 0);
-      const az0 = R() * 360;
-      for (let k = 0; k < n; k++) {
-        const az = az0 + k * 360 / n + (R() - .5) * 40;
-        const tilt = 22 + R() * 22;
-        let axis = rotAxis(side, dir, az * D);
-        let nd = unit(rotAxis(dir, unit(axis), tilt * D));
-        nd = unit(add(nd, [0, .25, 0]));
-        branch(tip, nd, L * (.62 + R() * .16), w * .62, lvl - 1);
-      }
-    } else P.add(leaf(add(tip, mul(dir, .04)), .05, R() * 6));
-    P.add(bez(add(tip, mul(side, -w * .6)), add(add(base, mul(dir, L * .7)), add(mul(side, -w * .75), bend)), add(add(base, mul(dir, L * .35)), add(mul(side, -w * .9), bend)), add(base, mul(side, -w))));
+  const P = new Pen(), R = rnd(8), cc = [0, .3, 0], RX = .78, RY = .56, RZ = .62;
+  // blad: amandelvorm met nerf, licht gebogen; begint en eindigt bij de steel b
+  const leaf = (b, t, roll, sz) => {
+    t = unit(t); let u = cross(t, Y); if (len(u) < .2) u = cross(t, X); u = unit(rotAxis(unit(u), t, roll));
+    const n = unit(cross(t, u)), p = (q, w) => add(add(b, mul(t, q * sz)), add(mul(u, w * sz), mul(n, .16 * q * q * sz)));
+    const A = [], B = [];
+    for (let k = 0; k <= 16; k++) { const q = k / 16, w = .34 * Math.sin(Math.PI * Math.pow(q, .75)); A.push(p(q, w)); B.push(p(q, -w)); }
+    const mid = []; for (let k = 0; k <= 10; k++) mid.push(p(.78 * k / 10, 0));
+    return [...A, ...B.reverse().slice(1), ...mid.slice(1), ...mid.reverse().slice(1)];
   };
-  P.add(seg(P.last, [.11, -1, 0]));
-  branch([0, -1, 0], [0, 1, 0], .72, .11, depth);
-  for (let k = 0; k < 7; k++) {                                              // vallende blaadjes
-    const c = [(R() - .5) * 2, -.95 + R() * 1.1, (R() - .5) * 1.2];
-    if (Math.abs(c[0]) < .3 && c[1] > -.4) c[0] += c[0] < 0 ? -.45 : .45;
-    P.jump(leaf(c, .08, R() * 6));
+  P.add(arc([0, -1, 0], X, Z, .5, 200, 560));                                 // grond
+  // tak als smalle omtrek: aan de ene kant omhoog, aan de andere kant terug
+  const branch = (base, dir, L, w, lvl) => {
+    const tip = add(base, mul(dir, L)), wt = w * .58;
+    let side = cross(dir, Z); if (len(side) < .2) side = cross(dir, X); side = unit(side);
+    const bend = mul(cross(dir, side), (R() - .5) * L * .4);
+    P.add(bez(add(base, mul(side, w)), add(add(base, mul(dir, L * .35)), add(mul(side, w * .85), bend)), add(add(base, mul(dir, L * .7)), add(mul(side, wt * 1.1), bend)), add(tip, mul(side, wt))));
+    if (lvl > 0) {
+      const n = lvl === 2 ? 3 : 2, az0 = R() * 360;
+      for (let k = 0; k < n; k++) {
+        const az = az0 + k * 360 / n + (R() - .5) * 50, tilt = (lvl === 2 ? 34 : 30) + R() * 14;
+        const r0 = unit(rotAxis(dir, unit(rotAxis(side, dir, az * D)), tilt * D)), nd = unit([r0[0], r0[1] + .15, r0[2] * .55]);
+        branch(tip, nd, L * (.7 + R() * .12), w * .6, lvl - 1);
+      }
+    }
+    P.add(bez(add(tip, mul(side, -wt)), add(add(base, mul(dir, L * .7)), add(mul(side, -wt * 1.1), bend)), add(add(base, mul(dir, L * .35)), add(mul(side, -w * .85), bend)), add(base, mul(side, -w))));
+  };
+  P.add(seg(P.last, [.1, -1, 0]));
+  branch([0, -1, 0], [0, 1, 0], .8, .1, 2);
+  // kruin: wolkcontour met bollingen van wisselende grootte, golvend in de diepte
+  const W = []; let tot = 0; for (let k = 0; k < 11; k++) { const w = .7 + R() * .6; W.push(w); tot += w; }
+  const crown = [], a0 = -90 + (R() - .5) * 20; let acc = 0;
+  W.forEach((w, k) => {
+    const amp = .11 * (.75 + R() * .5), n = 26;
+    for (let j = (k ? 1 : 0); j <= n; j++) {
+      const th = (a0 + 360 * (acc + w * j / n) / tot) * D, bump = 1 + amp * Math.pow(Math.max(0, Math.sin(Math.PI * j / n)), .7);
+      crown.push([cc[0] + RX * bump * Math.cos(th), cc[1] + RY * bump * Math.sin(th), cc[2] + RZ * .45 * Math.sin(2 * th + 1) * bump]);
+    }
+    acc += w;
+  });
+  P.jump(crown);
+  // binnenin: bladerpartijen als twee bolletjes, op verschillende diepte
+  for (let k = 0; k < 3; k++) {
+    const az = (k / 3) * 360 + R() * 40, c = add(cc, [Math.cos(az * D) * .38, (R() - .3) * .3, Math.sin(az * D) * .38]), r = .17 + R() * .07;
+    const u = unit(rotY(X, -az * .3)), r2 = r * (.6 + R() * .25);
+    P.jump(arc(c, u, Y, r, 172, 18));
+    P.add(arc(add(c, mul(u, (r + r2) * .82)), u, Y, r2, 168, 22));
   }
+  // blaadjes aan de rand van de kruin
+  const nl = 5 + Math.round(clampN(d, 1, 10) * .6);
+  for (let k = 0; k < nl; k++) {
+    const i = Math.floor((k + R() * .6) / nl * crown.length) % crown.length, p0 = crown[i];
+    const out = unit(sub(p0, cc)), t = unit(add(out, [(R() - .5) * .6, -.35, (R() - .5) * .6]));
+    P.jump(leaf(p0, t, R() * 6, .13));
+  }
+  [[-.82, -.42, .2, .9], [.74, -.66, -.1, 2.4], [-.46, -.9, .3, 4.1]].forEach(([x, y, z, r]) =>   // dwarrelende blaadjes
+    P.jump(leaf([x, y, z], [Math.cos(r), Math.sin(r) * .6, Math.sin(r * 1.3) * .5], r * 1.7, .17)));
   return P;
 } };
 

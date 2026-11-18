@@ -11,7 +11,7 @@
 ╚══════════════════════════════════════════════════════════╝
 ```
 
-![Version](https://img.shields.io/badge/VERSION-1.3.1-FF5EB8?style=for-the-badge&labelColor=2A1458)
+![Version](https://img.shields.io/badge/VERSION-1.3.2-FF5EB8?style=for-the-badge&labelColor=2A1458)
 ![3D](https://img.shields.io/badge/THREE.JS-r180-68E3D6?style=for-the-badge&labelColor=2A1458)
 ![Electron](https://img.shields.io/badge/ELECTRON-40-FFF38C?style=for-the-badge&labelColor=2A1458)
 ![Broer](https://img.shields.io/badge/BROER%20VAN-ONE%20LINE%20PREZI-C9B0F7?style=for-the-badge&labelColor=2A1458)
