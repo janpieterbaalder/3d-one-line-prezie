@@ -172,7 +172,7 @@ MODELS.appel = { name: 'Appel', tilt: [14, -20], build(d) {
 // kruin verdwijnen. De kruin golft in de diepte, met binnenin een paar
 // bladerpartijen; aan de rand hangen blaadjes en een paar dwarrelen omlaag.
 // "Detail" geeft alleen meer blaadjes; de vorm van de boom blijft gelijk.
-MODELS.boom = { name: 'Boom met vallend blad', tilt: [6, -20], build(d) {
+MODELS.boom = { name: 'Boom met volle kruin', tilt: [6, -20], build(d) {
   const P = new Pen(), R = rnd(8), cc = [0, .3, 0], RX = .78, RY = .56, RZ = .62;
   // blad: amandelvorm met nerf, licht gebogen; begint en eindigt bij de steel b
   const leaf = (b, t, roll, sz) => {
@@ -230,6 +230,52 @@ MODELS.boom = { name: 'Boom met vallend blad', tilt: [6, -20], build(d) {
   }
   [[-.82, -.42, .2, .9], [.74, -.66, -.1, 2.4], [-.46, -.9, .3, 4.1]].forEach(([x, y, z, r]) =>   // dwarrelende blaadjes
     P.jump(leaf([x, y, z], [Math.cos(r), Math.sin(r) * .6, Math.sin(r * 1.3) * .5], r * 1.7, .17)));
+  return P;
+} };
+
+// Kale boom, naar de 2D-tekening "boom loslaten" (vaak gebruikt bij verlies):
+// een korte stam met drie takken die zich wijd vertakken, hier en daar nog een
+// blaadje, en een paar blaadjes die met de wind meegaan. "Detail" bepaalt
+// hoeveel blaadjes er nog aan de boom zitten; de vorm blijft gelijk.
+MODELS.boomkaal = { name: 'Kale boom met vallend blad', tilt: [6, -20], build(d) {
+  const P = new Pen(), R = rnd(19), leafP = .3 + Math.max(1, Math.min(10, +d || 5)) * .05;
+  // blad: amandelvorm met nerf, licht gebogen; begint en eindigt bij de steel b
+  const leaf = (b, t, roll, sz) => {
+    t = unit(t); let u = cross(t, Y); if (len(u) < .2) u = cross(t, X); u = unit(rotAxis(unit(u), t, roll));
+    const n = unit(cross(t, u)), p = (q, w) => add(add(b, mul(t, q * sz)), add(mul(u, w * sz), mul(n, .16 * q * q * sz)));
+    const A = [], B = [];
+    for (let k = 0; k <= 16; k++) { const q = k / 16, w = .34 * Math.sin(Math.PI * Math.pow(q, .75)); A.push(p(q, w)); B.push(p(q, -w)); }
+    const mid = []; for (let k = 0; k <= 10; k++) mid.push(p(.78 * k / 10, 0));
+    return [...A, ...B.reverse().slice(1), ...mid.slice(1), ...mid.reverse().slice(1)];
+  };
+  P.add(arc([0, -1, 0], X, Z, .55, 200, 560));                                // grond
+  const branch = (base, dir, L, w, lvl, top) => {
+    const tip = add(base, mul(dir, L)), wt = w * (lvl ? .6 : .45);
+    let side = cross(dir, Z); if (len(side) < .2) side = cross(dir, X); side = unit(side);
+    const bend = mul(cross(dir, side), (R() - .5) * L * .35);
+    P.add(bez(add(base, mul(side, w)), add(add(base, mul(dir, L * .35)), add(mul(side, w * .85), bend)), add(add(base, mul(dir, L * .7)), add(mul(side, wt * 1.1), bend)), add(tip, mul(side, wt))));
+    if (lvl > 0) {
+      const n = top ? 3 : (R() < .25 ? 3 : 2), az0 = R() * 360;
+      for (let k = 0; k < n; k++) {
+        const az = az0 + k * 360 / n + (R() - .5) * (top ? 30 : 60), tilt = (top ? 36 : 28) + R() * 16;
+        const r0 = unit(rotAxis(dir, unit(rotAxis(side, dir, az * D)), tilt * D)), nd = unit([r0[0], r0[1] + .15, r0[2] * .7]);
+        branch(tip, nd, L * (top ? .95 + R() * .2 : .62 + R() * .16), w * (top ? .62 : .6), lvl - 1, false);
+      }
+    } else {
+      const pr = R(), roll = (R() - .5) * 1.4, sz = .13 + R() * .02;            // altijd evenveel trekkingen: vorm blijft gelijk
+      if (pr < leafP) {
+        let h = [dir[0], 0, dir[2]]; h = len(h) < .1 ? X : unit(h);
+        const t = unit(add(mul(dir, .8), add(mul(h, .8), [0, -.15, 0])));
+        P.add(seg(P.last, tip)); P.add(leaf(add(tip, mul(t, .015)), t, roll, sz)); P.add(seg(P.last, tip));
+      }
+    }
+    P.add(bez(add(tip, mul(side, -wt)), add(add(base, mul(dir, L * .7)), add(mul(side, -wt * 1.1), bend)), add(add(base, mul(dir, L * .35)), add(mul(side, -w * .85), bend)), add(base, mul(side, -w))));
+  };
+  P.add(seg(P.last, [.09, -1, 0]));
+  branch([0, -1, 0], [0, 1, 0], .5, .09, 3, true);
+  // twee blaadjes die met de wind meegaan, en één dat bijna de grond raakt
+  [[.86, .02, .12, .16, .5], [1.08, -.32, -.06, .13, 2.2], [.62, -.84, .2, .12, 3.6]].forEach(([x, y, z, sz, r]) =>
+    P.jump(leaf([x, y, z], [Math.cos(r), Math.sin(r) * .7, Math.sin(r * 1.4) * .5], r * 1.9, sz)));
   return P;
 } };
 
@@ -512,7 +558,7 @@ function build(name, detail) {
 // text = handgeschreven tekst als 3D-lijn.
 const LIBRARY = {
   'anker': { model: 'anker' }, 'appel': { model: 'appel' }, 'autonomie': { relief: 2.4 }, 'bed': { relief: 2.2 },
-  'boek': { model: 'boek' }, 'boeken': { model: 'boeken' }, 'boom-loslaten': { model: 'boom' }, 'bullitpoints': { model: 'opsomming' },
+  'boek': { model: 'boek' }, 'boeken': { model: 'boeken' }, 'boom-loslaten': { model: 'boomkaal' }, 'bullitpoints': { model: 'opsomming' },
   'diamant-model-leget': { model: 'diamant' }, 'dimensies-nolan': { relief: 2 }, 'gesprek': { relief: 2.4 }, 'gesprek4': { relief: 2.4 },
   'hand': { model: 'helling' }, 'handa': { relief: 2.6 }, 'herstel-na-trauma': { model: 'herstel' }, 'kompas': { model: 'kompas' },
   'lego': { model: 'lego' }, 'palliatief-diagram': { model: 'trap' }, 'rubiks-kubus': { model: 'rubiks' }, 'taartjes': { model: 'taart' },

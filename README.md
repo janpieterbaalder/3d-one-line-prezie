@@ -11,7 +11,7 @@
 ╚══════════════════════════════════════════════════════════╝
 ```
 
-![Version](https://img.shields.io/badge/VERSION-1.3.2-FF5EB8?style=for-the-badge&labelColor=2A1458)
+![Version](https://img.shields.io/badge/VERSION-1.4.0-FF5EB8?style=for-the-badge&labelColor=2A1458)
 ![3D](https://img.shields.io/badge/THREE.JS-r180-68E3D6?style=for-the-badge&labelColor=2A1458)
 ![Electron](https://img.shields.io/badge/ELECTRON-40-FFF38C?style=for-the-badge&labelColor=2A1458)
 ![Broer](https://img.shields.io/badge/BROER%20VAN-ONE%20LINE%20PREZI-C9B0F7?style=for-the-badge&labelColor=2A1458)
@@ -56,7 +56,7 @@ gewoon openen: ze worden automatisch omgezet naar 3D.
 
 | | |
 |:---|:---|
-| **3D-tekeningen** | Echte 3D-lijntekeningen met zacht afgeronde hoeken: kompas, zandloper (met gedraaide palen), wegwijzer, anker (met ketting en touw), appel, open boek, boekenplank, boom met vallend blad, weegschaal, Rubik's kubus met verschoven lagen, legostenen, taart met kaarsjes, steeksleutel, vraagteken en diamant. Plus figuren uit de bibliotheek (mensen, handen) met een subtiel reliëf. Alles wat 3D is staat bij *Toevoegen → 3D-tekening, figuur of vorm*; de bibliotheek zelf bevat de platte 2D-tekeningen. |
+| **3D-tekeningen** | Echte 3D-lijntekeningen met zacht afgeronde hoeken: kompas, zandloper (met gedraaide palen), wegwijzer, anker (met ketting en touw), appel, open boek, boekenplank, kale boom met vallend blad, boom met volle kruin, weegschaal, Rubik's kubus met verschoven lagen, legostenen, taart met kaarsjes, steeksleutel, vraagteken en diamant. Plus figuren uit de bibliotheek (mensen, handen) met een subtiel reliëf. Alles wat 3D is staat bij *Toevoegen → 3D-tekening, figuur of vorm*; de bibliotheek zelf bevat de platte 2D-tekeningen. |
 | **Showcase** | De app opent met een presentatie die laat zien wat er kan. Je vorige werk staat klaar via *Ga verder met mijn werk* (of *Bestand → Vorige sessie terugzetten*). |
 | **Volgorde** | Versleep dia's in de lijst (of gebruik ↑ ↓): de presentatie volgt de nieuwe volgorde en de dia's wisselen van plek op dezelfde route door de ruimte. |
 | **Dia's die pas verschijnen bij aankomst** | Onderweg zie je alleen de lijn; de kaart van een dia verschijnt zacht als de camera aankomt. Het kader kan ook *alleen een rand* of *onzichtbaar* zijn. |
