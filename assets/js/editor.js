@@ -922,20 +922,28 @@ function openShapes() {
     b.firstChild.outerHTML = svg;
     grid.appendChild(b);
   });
-  const grid2 = h('div', { class: 'lib dark' });
   const MM = window.OLP3D_MODELS;
-  if (MM) Object.entries(MM.MODELS).forEach(([k, m]) => {
-    const svg = `<svg viewBox="0 0 100 56" xmlns="http://www.w3.org/2000/svg"><g transform="translate(22,-0.5) scale(.57)"><path d="${MM.preview(k, 5, null, null, 100)}" fill="none" stroke="#ff9ad5" stroke-width="1.1" vector-effect="non-scaling-stroke"/></g></svg>`;
-    const b = h('button', { title: m.name, onclick: () => { closeFn && closeFn(null); addModel(k); } }, h('span', { html: '' }), h('span', {}, m.name));
-    b.firstChild.outerHTML = svg; grid2.appendChild(b);
+  // 3D-tekeningen, ingedeeld per thema
+  const modelSecs = [];
+  if (MM) (MM.GROUPS || [['overig', '3D-tekeningen']]).forEach(([gk, gname]) => {
+    const list = Object.entries(MM.MODELS).filter(([, m]) => (m.group || 'overig') === gk);
+    if (!list.length) return;
+    const g2 = h('div', { class: 'lib dark' });
+    list.forEach(([k, m]) => {
+      const svg = `<svg viewBox="0 0 100 56" xmlns="http://www.w3.org/2000/svg"><g transform="translate(22,-0.5) scale(.57)"><path d="${MM.preview(k, 5, null, null, 100)}" fill="none" stroke="#ff9ad5" stroke-width="1.1" vector-effect="non-scaling-stroke"/></g></svg>`;
+      const b = h('button', { title: m.name, onclick: () => { closeFn && closeFn(null); addModel(k); } }, h('span', { html: '' }), h('span', {}, m.name));
+      b.firstChild.outerHTML = svg; g2.appendChild(b);
+    });
+    modelSecs.push(h('div', { class: 'sec' }, h('h4', {}, '3D-tekeningen · ' + gname), g2));
   });
+  // figuren in reliëf: de nieuwe (mensen, handen) en die uit de bibliotheek
   const grid3 = h('div', { class: 'lib' });
-  if (MM) (window.SVG_LIBRARY || []).filter(e => MM.reliefDepth(e.file) > 0).forEach(e => {
-    grid3.appendChild(h('button', { title: e.name + ' (reliëf)', onclick: () => { closeFn && closeFn(null); addRelief(e, MM.reliefDepth(e.file)); } }, h('img', { src: svgDataUrl(e.svg), alt: e.name, loading: 'lazy' }), h('span', {}, e.name)));
-  });
+  const reliefBtn = (e, depth) => grid3.appendChild(h('button', { title: e.name + ' (reliëf)', onclick: () => { closeFn && closeFn(null); addRelief(e, depth); } }, h('img', { src: svgDataUrl(e.svg), alt: e.name, loading: 'lazy' }), h('span', {}, e.name)));
+  (window.OLP3D_RELIEFS || []).forEach(e => reliefBtn(e, e.depth || .75));
+  if (MM) (window.SVG_LIBRARY || []).filter(e => MM.reliefDepth(e.file) > 0).forEach(e => reliefBtn(e, MM.reliefDepth(e.file)));
   dialog({ title: '3D: tekeningen, figuren en vormen', wide: true, body: h('div', {},
     h('p', { class: 'note' }, 'Alles hieronder is 3D: de camera kan er tijdens het presenteren omheen draaien (beweging “Rondje om tekening”). Platte tekeningen vind je bij 2D-tekening uit bibliotheek.'),
-    h('div', { class: 'sec' }, h('h4', {}, '3D-tekeningen'), grid2),
+    ...modelSecs,
     h('div', { class: 'sec' }, h('h4', {}, 'Figuren in reliëf'), grid3),
     h('div', { class: 'sec' }, h('h4', {}, 'Wiskundige vormen'), grid)), onOpen: (d, close) => { closeFn = close; } });
 }
@@ -1294,7 +1302,7 @@ function demoDoc() {
     { title: 'Balans', lineColor: '#fff38c', motion: 'rondje', items: [model('weegschaal', 590, 80, 740), txt('Alles in balans', 985, 64)] },
     { title: 'Jouw verhaal', lineColor: '#ff5eb8', items: [olt('Jouw verhaal', 470, 320), txt('Druk op O voor het hele kunstwerk', 840, 60, { italic: true })] }
   ].map(sl => Object.assign(sl, { items: sl.items.filter(Boolean) }));
-  return O.normalizeDoc({ title: 'Showcase — 3D One Line Prezi', settings: { world: 'nacht', glow: 3.5, frame: 'kaart', travelCam: 'volgen', drawCam: 'meekijken', drawSpeed: 6 }, slides });
+  return O.normalizeDoc({ title: 'Showcase — 3D One Line Prezi', settings: { world: 'ruimte', glow: 1.5, frame: 'geen', travelCam: 'volgen', drawCam: 'meekijken', drawSpeed: 6 }, slides });
 }
 function loadDemo() {
   setDoc(demoDoc());
